@@ -1,5 +1,8 @@
-# Cleanup.psm1 — safe, well-known cache deletions
+# Cleanup.psm1 -- safe, well-known cache deletions
 # Each target returns: Target, FilesRemoved, BytesFreed, Errors, Skipped
+
+$script:LastLogPath = $null
+function Get-LastCleanupLog { $script:LastLogPath }
 
 $script:ValidTargets = @(
     'UserTemp','SystemTemp','Prefetch','WER','WindowsUpdate',
@@ -115,7 +118,7 @@ function Invoke-SingleTarget {
             'EdgeCache' {
                 if (Test-BrowserRunning -Names 'msedge') {
                     $result.Skipped = $true
-                    $result.SkipReason = 'Edge is running — close it and re-run.'
+                    $result.SkipReason = 'Edge is running -- close it and re-run.'
                 } else {
                     foreach ($sub in 'Default','Profile 1','Profile 2','Profile 3') {
                         foreach ($cache in 'Cache','Code Cache','GPUCache') {
@@ -131,7 +134,7 @@ function Invoke-SingleTarget {
             'ChromeCache' {
                 if (Test-BrowserRunning -Names 'chrome') {
                     $result.Skipped = $true
-                    $result.SkipReason = 'Chrome is running — close it and re-run.'
+                    $result.SkipReason = 'Chrome is running -- close it and re-run.'
                 } else {
                     foreach ($sub in 'Default','Profile 1','Profile 2','Profile 3') {
                         foreach ($cache in 'Cache','Code Cache','GPUCache') {
@@ -147,7 +150,7 @@ function Invoke-SingleTarget {
             'FirefoxCache' {
                 if (Test-BrowserRunning -Names 'firefox') {
                     $result.Skipped = $true
-                    $result.SkipReason = 'Firefox is running — close it and re-run.'
+                    $result.SkipReason = 'Firefox is running -- close it and re-run.'
                 } else {
                     $profilesRoot = Join-Path $env:LOCALAPPDATA 'Mozilla\Firefox\Profiles'
                     if (Test-Path $profilesRoot) {
@@ -198,6 +201,34 @@ function Invoke-Cleanup {
     )
 
     $results = foreach ($t in $Targets) { Invoke-SingleTarget -Target $t }
+
+    # Always write a per-run log so users can inspect the actual error messages.
+    $logDir = Join-Path $env:LOCALAPPDATA 'WinTune\logs'
+    [void](New-Item -ItemType Directory -Path $logDir -Force -ErrorAction SilentlyContinue)
+    $stamp   = (Get-Date).ToString('yyyyMMdd-HHmmss')
+    $logPath = Join-Path $logDir "cleanup-$stamp.log"
+
+    $sb = New-Object System.Text.StringBuilder
+    [void]$sb.AppendLine("WinTune cleanup run -- $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')")
+    [void]$sb.AppendLine("Targets requested: $($Targets -join ', ')")
+    [void]$sb.AppendLine(("=" * 78))
+    foreach ($r in $results) {
+        $status = if ($r.Skipped) { 'SKIPPED' } elseif ($r.Errors.Count) { 'PARTIAL' } else { 'OK' }
+        [void]$sb.AppendLine("")
+        [void]$sb.AppendLine("[$status] $($r.Target)")
+        [void]$sb.AppendLine("  files removed : $($r.FilesRemoved)")
+        [void]$sb.AppendLine("  bytes freed   : $($r.BytesFreed) ($(Format-Bytes -Bytes $r.BytesFreed))")
+        if ($r.Skipped) {
+            [void]$sb.AppendLine("  skip reason   : $($r.SkipReason)")
+        }
+        if ($r.Errors.Count) {
+            [void]$sb.AppendLine("  errors ($($r.Errors.Count)):")
+            foreach ($e in $r.Errors) { [void]$sb.AppendLine("    - $e") }
+        }
+    }
+    Set-Content -LiteralPath $logPath -Value $sb.ToString() -Encoding UTF8
+    $script:LastLogPath = $logPath
+
     return $results
 }
 
@@ -209,4 +240,4 @@ function Format-Bytes {
     return "$Bytes B"
 }
 
-Export-ModuleMember -Function Invoke-Cleanup, Get-CleanupTargets, Format-Bytes
+Export-ModuleMember -Function Invoke-Cleanup, Get-CleanupTargets, Format-Bytes, Get-LastCleanupLog

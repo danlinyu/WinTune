@@ -1,4 +1,4 @@
-# Monitor.psm1 — live performance snapshot + top processes
+# Monitor.psm1 -- live performance snapshot + top processes
 
 function Get-PerfSnapshot {
     [CmdletBinding()]

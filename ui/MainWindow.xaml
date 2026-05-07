@@ -123,6 +123,7 @@
                         <Button x:Name="CleanRunBtn"      Content="Run Cleanup"        Background="#FF2D6CDF" Foreground="White" FontWeight="SemiBold" Width="160"/>
                         <Button x:Name="CleanSelectAllBtn"  Content="Select all"  Margin="10,4,0,4"/>
                         <Button x:Name="CleanSelectNoneBtn" Content="Clear all"   Margin="6,4,0,4"/>
+                        <Button x:Name="CleanOpenLogBtn"    Content="Open last log" Margin="6,4,0,4" IsEnabled="False"/>
                         <TextBlock x:Name="CleanTotalLbl" Margin="20,0,0,0"
                                    VerticalAlignment="Center" FontWeight="SemiBold" Foreground="#FF59A14F"/>
                     </StackPanel>

@@ -1,4 +1,4 @@
-# Startup.psm1 — read-only enumeration of Windows startup entries
+# Startup.psm1 -- read-only enumeration of Windows startup entries
 
 function Get-StartupApps {
     [CmdletBinding()]

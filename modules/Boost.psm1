@@ -1,4 +1,4 @@
-# Boost.psm1 — free working-set memory, restart Explorer, flush DNS
+# Boost.psm1 -- free working-set memory, restart Explorer, flush DNS
 
 if (-not ('WinTune.Native' -as [type])) {
     Add-Type -Namespace WinTune -Name Native -MemberDefinition @"

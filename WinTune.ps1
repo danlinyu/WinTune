@@ -1,4 +1,4 @@
-# WinTune.ps1 — entry point, builds the WPF window and wires events.
+# WinTune.ps1 -- entry point, builds the WPF window and wires events.
 # Launched via Launch-WinTune.cmd (forces STA + Windows PowerShell 5.1).
 
 #region Self-elevation
@@ -114,21 +114,42 @@ $ui.CleanRunBtn.Add_Click({
         $results = Invoke-Cleanup -Targets $targets
         $totalBytes = ($results | Measure-Object -Property BytesFreed -Sum).Sum
         $display = $results | ForEach-Object {
+            $note = if ($_.Skipped) {
+                $_.SkipReason
+            } elseif ($_.Errors.Count) {
+                $sample = ($_.Errors | Select-Object -First 1) -as [string]
+                if ($sample.Length -gt 90) { $sample = $sample.Substring(0,87) + '...' }
+                "$($_.Errors.Count) error(s): $sample"
+            } else { '' }
             [pscustomobject]@{
                 Target     = $_.Target
                 Status     = if ($_.Skipped) { 'Skipped' } elseif ($_.Errors.Count -gt 0) { 'Partial' } else { 'OK' }
                 Items      = $_.FilesRemoved
                 Freed      = (Format-Bytes -Bytes $_.BytesFreed)
-                Note       = if ($_.Skipped) { $_.SkipReason } elseif ($_.Errors.Count) { "$($_.Errors.Count) error(s)" } else { '' }
+                Note       = $note
             }
         }
         $ui.CleanResultsGrid.ItemsSource = @($display)
         $ui.CleanTotalLbl.Text = "Freed: $(Format-Bytes -Bytes $totalBytes)"
-        Set-Status "Cleanup done. Freed $(Format-Bytes -Bytes $totalBytes)."
+        $logPath = Get-LastCleanupLog
+        if ($logPath) {
+            $ui.CleanOpenLogBtn.IsEnabled = $true
+            $ui.CleanOpenLogBtn.Tag = $logPath
+        }
+        Set-Status "Cleanup done. Freed $(Format-Bytes -Bytes $totalBytes). Log: $logPath"
     } catch {
         Set-Status "Cleanup error: $($_.Exception.Message)"
     } finally {
         $ui.CleanRunBtn.IsEnabled = $true
+    }
+})
+
+$ui.CleanOpenLogBtn.Add_Click({
+    $p = $ui.CleanOpenLogBtn.Tag
+    if ($p -and (Test-Path $p)) {
+        Start-Process notepad.exe -ArgumentList "`"$p`""
+    } else {
+        Set-Status "No log file yet -- run cleanup first."
     }
 })
 
