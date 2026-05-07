@@ -24,7 +24,8 @@ Import-Module (Join-Path $ScriptRoot 'modules\Startup.psm1') -Force
 
 #region Load XAML
 $xamlPath = Join-Path $ScriptRoot 'ui\MainWindow.xaml'
-[xml]$xaml = Get-Content -LiteralPath $xamlPath -Raw
+$xamlText = [System.IO.File]::ReadAllText($xamlPath, [System.Text.UTF8Encoding]::new($false))
+[xml]$xaml = $xamlText
 $reader = New-Object System.Xml.XmlNodeReader $xaml
 try {
     $window = [Windows.Markup.XamlReader]::Load($reader)

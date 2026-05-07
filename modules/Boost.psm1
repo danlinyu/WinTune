@@ -30,7 +30,7 @@ function Clear-WorkingSets {
     Start-Sleep -Milliseconds 600
     Get-Process | ForEach-Object { $totalAfter += $_.WorkingSet64 }
 
-    $freedBytes = [math]::Max(0, $totalBefore - $totalAfter)
+    $freedBytes = [math]::Max([long]0, [long]($totalBefore - $totalAfter))
 
     [pscustomobject]@{
         ProcessesTrimmed = $trimmed
