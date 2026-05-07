@@ -1,0 +1,15 @@
+# Logs / runtime artefacts
+logs/
+*.log
+
+# Local toolchain (gh portable, etc.)
+.tools/
+
+# Editor / OS noise
+.vs/
+.vscode/
+*.swp
+Thumbs.db
+desktop.ini
+ehthumbs.db
+$RECYCLE.BIN/
