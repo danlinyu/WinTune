@@ -16,10 +16,11 @@ Add-Type -AssemblyName PresentationFramework
 Add-Type -AssemblyName PresentationCore
 Add-Type -AssemblyName WindowsBase
 
-Import-Module (Join-Path $ScriptRoot 'modules\Monitor.psm1') -Force
-Import-Module (Join-Path $ScriptRoot 'modules\Cleanup.psm1') -Force
-Import-Module (Join-Path $ScriptRoot 'modules\Boost.psm1')   -Force
-Import-Module (Join-Path $ScriptRoot 'modules\Startup.psm1') -Force
+Import-Module (Join-Path $ScriptRoot 'modules\Monitor.psm1')  -Force
+Import-Module (Join-Path $ScriptRoot 'modules\Cleanup.psm1')  -Force
+Import-Module (Join-Path $ScriptRoot 'modules\Boost.psm1')    -Force
+Import-Module (Join-Path $ScriptRoot 'modules\Startup.psm1')  -Force
+Import-Module (Join-Path $ScriptRoot 'modules\Diagnose.psm1') -Force
 #endregion
 
 #region Load XAML
@@ -190,11 +191,71 @@ $ui.BoostFlushDnsBtn.Add_Click({
 
 $ui.BoostOpenTaskMgrBtn.Add_Click({ Open-StartupTaskManager; Set-Status "Task Manager opened." })
 
+# --- Diagnose tab ---
+function Run-Diagnose {
+    Set-Status "Running diagnostics..."
+    try {
+        $f = @(Invoke-Diagnostics)
+        $ui.DiagFindingsGrid.ItemsSource = $f
+        $red    = ($f | Where-Object Severity -eq 'Red'    | Measure-Object).Count
+        $yellow = ($f | Where-Object Severity -eq 'Yellow' | Measure-Object).Count
+        $green  = ($f | Where-Object Severity -eq 'Green'  | Measure-Object).Count
+        $ui.DiagSummaryLbl.Text = "Findings: $red red, $yellow yellow, $green green"
+        $ui.DiagSummaryLbl.Foreground = if ($red -gt 0) { 'Red' } elseif ($yellow -gt 0) { '#FFB58900' } else { '#FF59A14F' }
+        Set-Status "Diagnostics done. $red red, $yellow yellow, $green green."
+    } catch { Set-Status "Diagnostics error: $($_.Exception.Message)" }
+}
+
+$ui.DiagRunBtn.Add_Click({ Run-Diagnose })
+
+$ui.FixResetQABtn.Add_Click({
+    Set-Status "Resetting Quick Access..."
+    try {
+        $r = Reset-QuickAccess
+        Set-Status "Quick Access reset: $($r.FilesRemoved) shortcuts removed. $($r.Note)"
+        Run-Diagnose
+    } catch { Set-Status "Reset error: $($_.Exception.Message)" }
+})
+
+$ui.FixDisableTelemetryBtn.Add_Click({
+    Set-Status "Disabling DiagTrack..."
+    try {
+        $r = Disable-Telemetry
+        Set-Status ($(if ($r.Success) { "Telemetry disabled. $($r.Note)" } else { "Failed: $($r.Note)" }))
+        Run-Diagnose
+    } catch { Set-Status "Telemetry fix error: $($_.Exception.Message)" }
+})
+
+$ui.FixClassicMenuBtn.Add_Click({
+    try {
+        $r = Enable-ClassicRightClick
+        Set-Status ($(if ($r.Success) { "Classic menu enabled. $($r.Note)" } else { "Failed: $($r.Note)" }))
+        Run-Diagnose
+    } catch { Set-Status "Classic menu error: $($_.Exception.Message)" }
+})
+
+$ui.FixUndoClassicBtn.Add_Click({
+    try {
+        $r = Disable-ClassicRightClick
+        Set-Status ($(if ($r.Success) { "$($r.Note)" } else { "Failed: $($r.Note)" }))
+        Run-Diagnose
+    } catch { Set-Status "Undo error: $($_.Exception.Message)" }
+})
+
+$ui.FixRebuildIndexBtn.Add_Click({
+    Set-Status "Triggering Search index rebuild..."
+    try {
+        $r = Start-SearchIndexRebuild
+        Set-Status ($(if ($r.Success) { "Search rebuild: $($r.Note)" } else { "Failed: $($r.Note)" }))
+    } catch { Set-Status "Rebuild error: $($_.Exception.Message)" }
+})
+
 # --- Window load ---
 $window.Add_Loaded({
     try {
         Update-Dashboard
         $ui.BoostStartupGrid.ItemsSource = @(Get-StartupApps)
+        Run-Diagnose
         $timer.Start()
         Set-Status "WinTune ready. Running as Administrator."
     } catch {

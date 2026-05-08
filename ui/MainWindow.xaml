@@ -171,6 +171,46 @@
                               BorderBrush="#FFD0D0DC" BorderThickness="1"/>
                 </Grid>
             </TabItem>
+
+            <!-- =========================== DIAGNOSE =========================== -->
+            <TabItem Header="  Diagnose  ">
+                <Grid Margin="14">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+
+                    <TextBlock Grid.Row="0" Text="Find what is making Explorer slow"
+                               Style="{StaticResource HeaderText}"/>
+
+                    <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,10">
+                        <Button x:Name="DiagRunBtn" Content="Run Diagnostics" Width="180"
+                                Background="#FF2D6CDF" Foreground="White" FontWeight="SemiBold"/>
+                        <TextBlock x:Name="DiagSummaryLbl" Margin="20,0,0,0"
+                                   VerticalAlignment="Center" FontWeight="SemiBold"/>
+                    </StackPanel>
+
+                    <DataGrid Grid.Row="2" x:Name="DiagFindingsGrid"
+                              AutoGenerateColumns="True" IsReadOnly="True"
+                              HeadersVisibility="Column" GridLinesVisibility="Horizontal"
+                              RowBackground="White" AlternatingRowBackground="#FFF2F2F7"
+                              BorderBrush="#FFD0D0DC" BorderThickness="1"/>
+
+                    <TextBlock Grid.Row="3" Text="Safe one-click fixes"
+                               Style="{StaticResource HeaderText}" Margin="0,16,0,4"/>
+
+                    <WrapPanel Grid.Row="4" Orientation="Horizontal">
+                        <Button x:Name="FixResetQABtn"          Content="Reset Quick Access"           Width="200" Margin="0,4,8,4"/>
+                        <Button x:Name="FixDisableTelemetryBtn" Content="Disable Telemetry"            Width="200" Margin="0,4,8,4"/>
+                        <Button x:Name="FixClassicMenuBtn"      Content="Apply Classic Right-Click"    Width="220" Margin="0,4,8,4"/>
+                        <Button x:Name="FixRebuildIndexBtn"     Content="Rebuild Search Index"         Width="200" Margin="0,4,8,4"/>
+                        <Button x:Name="FixUndoClassicBtn"      Content="Undo Classic Right-Click"     Width="220" Margin="0,4,8,4"/>
+                    </WrapPanel>
+                </Grid>
+            </TabItem>
         </TabControl>
     </DockPanel>
 </Window>
