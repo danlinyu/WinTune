@@ -21,6 +21,7 @@ Import-Module (Join-Path $ScriptRoot 'modules\Cleanup.psm1')  -Force
 Import-Module (Join-Path $ScriptRoot 'modules\Boost.psm1')    -Force
 Import-Module (Join-Path $ScriptRoot 'modules\Startup.psm1')  -Force
 Import-Module (Join-Path $ScriptRoot 'modules\Diagnose.psm1') -Force
+Import-Module (Join-Path $ScriptRoot 'modules\Dedup.psm1')    -Force
 #endregion
 
 #region Load XAML
@@ -250,12 +251,186 @@ $ui.FixRebuildIndexBtn.Add_Click({
     } catch { Set-Status "Rebuild error: $($_.Exception.Message)" }
 })
 
+# --- Dedupe tab ---
+# Holds the most recent scan results (groups) so auto-select buttons can act
+# without re-scanning.
+$script:DedupeGroups = @()
+
+function Format-Bytes-Local {
+    param([long]$B)
+    if ($B -ge 1GB) { return "{0:N2} GB" -f ($B / 1GB) }
+    if ($B -ge 1MB) { return "{0:N2} MB" -f ($B / 1MB) }
+    if ($B -ge 1KB) { return "{0:N2} KB" -f ($B / 1KB) }
+    return "$B B"
+}
+
+function Reset-DedupePaths {
+    $ui.DedupePathsList.Items.Clear()
+    foreach ($p in (Get-DefaultScanRoots)) { [void]$ui.DedupePathsList.Items.Add($p) }
+}
+
+$ui.DedupeDefaultsBtn.Add_Click({ Reset-DedupePaths })
+
+$ui.DedupeAddPathBtn.Add_Click({
+    Add-Type -AssemblyName System.Windows.Forms
+    $dlg = New-Object System.Windows.Forms.FolderBrowserDialog
+    $dlg.Description = 'Pick a folder to scan for duplicates'
+    if ($dlg.ShowDialog() -eq 'OK' -and $dlg.SelectedPath) {
+        if (-not $ui.DedupePathsList.Items.Contains($dlg.SelectedPath)) {
+            [void]$ui.DedupePathsList.Items.Add($dlg.SelectedPath)
+        }
+    }
+})
+
+$ui.DedupeRemovePathBtn.Add_Click({
+    $sel = @($ui.DedupePathsList.SelectedItems)
+    foreach ($s in $sel) { $ui.DedupePathsList.Items.Remove($s) }
+})
+
+$ui.DedupeScanBtn.Add_Click({
+    $paths = @($ui.DedupePathsList.Items)
+    if (-not $paths -or $paths.Count -eq 0) {
+        Set-Status "No paths to scan. Click 'Defaults' or 'Add path...' first."
+        return
+    }
+    $minSizeRaw = $ui.DedupeMinSizeCombo.SelectedItem.Tag
+    $minSize    = [long]$minSizeRaw
+
+    $ui.DedupeScanBtn.IsEnabled = $false
+    $ui.DedupeStatusLbl.Text    = "Scanning..."
+    Set-Status "Dedupe scan starting on $($paths.Count) path(s)..."
+
+    # Force the UI to repaint before the synchronous scan blocks the dispatcher.
+    $window.Dispatcher.Invoke([Action]{}, [System.Windows.Threading.DispatcherPriority]::Render)
+
+    try {
+        $progressCb = {
+            param($info)
+            try {
+                $msg = switch ($info.Phase) {
+                    'Scan'      { "Phase 1/2: scanned $($info.FilesSeen) files..." }
+                    'HashStart' { "Phase 2/2: hashing $($info.Candidates) size-collision candidates..." }
+                    'Hash'      { "Hashed $($info.Hashed) / $($info.Total)..." }
+                    'Done'      { "Done. $($info.Groups) duplicate group(s) found." }
+                    default     { '' }
+                }
+                $ui.DedupeStatusLbl.Text = $msg
+                $window.Dispatcher.Invoke([Action]{}, [System.Windows.Threading.DispatcherPriority]::Background)
+            } catch {}
+        }
+        $groups = @(Find-Duplicates -Paths $paths -MinSizeBytes $minSize -OnProgress $progressCb)
+        $script:DedupeGroups = $groups
+
+        # Flatten for grid display.
+        $rows = foreach ($g in $groups) {
+            foreach ($f in $g.Files) {
+                [pscustomobject]@{
+                    Group     = $g.GroupId
+                    Size      = (Format-Bytes-Local $g.SizeBytes)
+                    Path      = $f.FullName
+                    Modified  = $f.LastWriteTime.ToString('yyyy-MM-dd HH:mm')
+                    SizeBytes = [long]$g.SizeBytes
+                }
+            }
+        }
+        $ui.DedupeGrid.ItemsSource = @($rows)
+
+        $totalWasted = ($groups | Measure-Object -Property WastedBytes -Sum).Sum
+        if (-not $totalWasted) { $totalWasted = 0 }
+        $msg = "Found $($groups.Count) group(s), $((@($rows)).Count) duplicate file(s). Reclaimable: $(Format-Bytes-Local $totalWasted)."
+        $ui.DedupeStatusLbl.Text = $msg
+        Set-Status $msg
+    } catch {
+        Set-Status "Dedupe scan error: $($_.Exception.Message)"
+    } finally {
+        $ui.DedupeScanBtn.IsEnabled = $true
+    }
+})
+
+function Set-DedupeSelection {
+    param([scriptblock]$KeepPredicate) # given list of $g.Files, returns the one to KEEP
+    if (-not $script:DedupeGroups -or $script:DedupeGroups.Count -eq 0) {
+        Set-Status "Run a scan first."
+        return
+    }
+    $ui.DedupeGrid.SelectedItems.Clear()
+    $items = @($ui.DedupeGrid.ItemsSource)
+    foreach ($g in $script:DedupeGroups) {
+        $keep = & $KeepPredicate $g.Files
+        $keepPath = $keep.FullName
+        foreach ($row in $items) {
+            if ($row.Group -eq $g.GroupId -and $row.Path -ne $keepPath) {
+                [void]$ui.DedupeGrid.SelectedItems.Add($row)
+            }
+        }
+    }
+    $n = $ui.DedupeGrid.SelectedItems.Count
+    $totalSelectedBytes = 0L
+    foreach ($r in $ui.DedupeGrid.SelectedItems) { $totalSelectedBytes += [long]$r.SizeBytes }
+    Set-Status "Selected $n file(s) for deletion ($(Format-Bytes-Local $totalSelectedBytes))."
+}
+
+$ui.DedupeAutoOldestBtn.Add_Click({
+    Set-DedupeSelection { param($files) $files | Sort-Object LastWriteTime | Select-Object -First 1 }
+})
+$ui.DedupeAutoNewestBtn.Add_Click({
+    Set-DedupeSelection { param($files) $files | Sort-Object LastWriteTime -Descending | Select-Object -First 1 }
+})
+$ui.DedupeAutoShortestPathBtn.Add_Click({
+    Set-DedupeSelection { param($files) $files | Sort-Object @{e={$_.FullName.Length}} | Select-Object -First 1 }
+})
+$ui.DedupeUnselectBtn.Add_Click({ $ui.DedupeGrid.SelectedItems.Clear() })
+
+$ui.DedupeDeleteBtn.Add_Click({
+    $sel = @($ui.DedupeGrid.SelectedItems)
+    if ($sel.Count -eq 0) {
+        Set-Status "No rows selected."
+        return
+    }
+
+    # Safety: refuse if ALL files in any group are selected.
+    $bad = @()
+    foreach ($g in $script:DedupeGroups) {
+        $groupRows = @($sel | Where-Object { $_.Group -eq $g.GroupId })
+        if ($groupRows.Count -ge $g.FileCount) { $bad += $g.GroupId }
+    }
+    if ($bad.Count -gt 0) {
+        [System.Windows.MessageBox]::Show(
+            "Cowardly refusing: every file in group(s) $($bad -join ', ') is selected -- you would lose all copies. Untick at least one row per group.",
+            "WinTune Dedupe -- safety stop", 'OK', 'Warning') | Out-Null
+        return
+    }
+
+    $totalBytes = ($sel | Measure-Object -Property SizeBytes -Sum).Sum
+    $confirm = [System.Windows.MessageBox]::Show(
+        "Send $($sel.Count) file(s) ($(Format-Bytes-Local $totalBytes)) to the Recycle Bin?",
+        "WinTune Dedupe -- confirm", 'OKCancel', 'Question')
+    if ($confirm -ne 'OK') { return }
+
+    $paths = $sel | ForEach-Object { $_.Path }
+    Set-Status "Sending $($paths.Count) file(s) to Recycle Bin..."
+    try {
+        $r = Remove-DuplicateFiles -Paths $paths
+        $msg = "Deleted $($r.Deleted) file(s), freed $(Format-Bytes-Local $r.BytesFreed)."
+        if ($r.Errors.Count) { $msg += " Errors: $($r.Errors.Count)." }
+        $ui.DedupeStatusLbl.Text = $msg
+        Set-Status $msg
+
+        # Refresh grid: drop deleted rows from view.
+        $survivors = @($ui.DedupeGrid.ItemsSource | Where-Object { $paths -notcontains $_.Path })
+        $ui.DedupeGrid.ItemsSource = $survivors
+    } catch {
+        Set-Status "Delete error: $($_.Exception.Message)"
+    }
+})
+
 # --- Window load ---
 $window.Add_Loaded({
     try {
         Update-Dashboard
         $ui.BoostStartupGrid.ItemsSource = @(Get-StartupApps)
         Run-Diagnose
+        Reset-DedupePaths
         $timer.Start()
         Set-Status "WinTune ready. Running as Administrator."
     } catch {

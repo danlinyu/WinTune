@@ -172,6 +172,68 @@
                 </Grid>
             </TabItem>
 
+            <!-- =========================== DEDUPE =========================== -->
+            <TabItem Header="  Dedupe  ">
+                <Grid Margin="14">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+
+                    <TextBlock Grid.Row="0" Text="Find and remove duplicate files"
+                               Style="{StaticResource HeaderText}"/>
+
+                    <Grid Grid.Row="1" Margin="0,0,0,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <ListBox x:Name="DedupePathsList" Height="90"
+                                 SelectionMode="Extended"
+                                 BorderBrush="#FFD0D0DC" BorderThickness="1"/>
+                        <StackPanel Grid.Column="1" Margin="8,0,0,0">
+                            <Button x:Name="DedupeAddPathBtn"      Content="Add path..." Width="130"/>
+                            <Button x:Name="DedupeRemovePathBtn"   Content="Remove"      Width="130"/>
+                            <Button x:Name="DedupeDefaultsBtn"     Content="Defaults"    Width="130"/>
+                        </StackPanel>
+                    </Grid>
+
+                    <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,0,0,8">
+                        <TextBlock Text="Min size:" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                        <ComboBox x:Name="DedupeMinSizeCombo" Width="110" SelectedIndex="1">
+                            <ComboBoxItem Content="1 KB"   Tag="1024"/>
+                            <ComboBoxItem Content="1 MB"   Tag="1048576"/>
+                            <ComboBoxItem Content="10 MB"  Tag="10485760"/>
+                            <ComboBoxItem Content="100 MB" Tag="104857600"/>
+                        </ComboBox>
+                        <Button x:Name="DedupeScanBtn" Content="Scan for Duplicates" Width="200"
+                                Background="#FF2D6CDF" Foreground="White" FontWeight="SemiBold"
+                                Margin="20,0,0,0"/>
+                        <TextBlock x:Name="DedupeStatusLbl" VerticalAlignment="Center"
+                                   Margin="20,0,0,0" FontFamily="Consolas"/>
+                    </StackPanel>
+
+                    <DataGrid Grid.Row="3" x:Name="DedupeGrid"
+                              AutoGenerateColumns="True" IsReadOnly="True"
+                              SelectionMode="Extended" SelectionUnit="FullRow"
+                              HeadersVisibility="Column" GridLinesVisibility="Horizontal"
+                              RowBackground="White" AlternatingRowBackground="#FFF2F2F7"
+                              BorderBrush="#FFD0D0DC" BorderThickness="1"/>
+
+                    <WrapPanel Grid.Row="4" Margin="0,10,0,0">
+                        <Button x:Name="DedupeAutoOldestBtn"       Content="Select all but oldest in each group"   Width="260" Margin="0,4,8,4"/>
+                        <Button x:Name="DedupeAutoNewestBtn"       Content="Select all but newest in each group"   Width="260" Margin="0,4,8,4"/>
+                        <Button x:Name="DedupeAutoShortestPathBtn" Content="Select all but shortest path"          Width="220" Margin="0,4,8,4"/>
+                        <Button x:Name="DedupeUnselectBtn"         Content="Clear selection"                       Width="140" Margin="0,4,8,4"/>
+                        <Button x:Name="DedupeDeleteBtn"           Content="Send Selected to Recycle Bin"          Width="240"
+                                Background="#FFE15759" Foreground="White" FontWeight="SemiBold" Margin="0,4,8,4"/>
+                    </WrapPanel>
+                </Grid>
+            </TabItem>
+
             <!-- =========================== DIAGNOSE =========================== -->
             <TabItem Header="  Diagnose  ">
                 <Grid Margin="14">
