@@ -233,10 +233,33 @@ function Invoke-SingleTarget {
 function Invoke-Cleanup {
     [CmdletBinding()]
     param(
-        [string[]]$Targets = $script:ValidTargets
+        [string[]]$Targets = $script:ValidTargets,
+        [scriptblock]$OnProgress
     )
 
-    $results = foreach ($t in $Targets) { Invoke-SingleTarget -Target $t }
+    $results = New-Object System.Collections.ArrayList
+    $i = 0
+    foreach ($t in $Targets) {
+        $i++
+        if ($OnProgress) {
+            & $OnProgress @{ Phase = 'Start'; Index = $i; Total = $Targets.Count; Target = $t }
+        }
+        $r = Invoke-SingleTarget -Target $t
+        [void]$results.Add($r)
+        if ($OnProgress) {
+            & $OnProgress @{
+                Phase        = 'TargetDone'
+                Index        = $i
+                Total        = $Targets.Count
+                Target       = $t
+                FilesRemoved = $r.FilesRemoved
+                BytesFreed   = $r.BytesFreed
+                Skipped      = $r.Skipped
+                ErrorCount   = $r.Errors.Count
+            }
+        }
+    }
+    $results = $results.ToArray()
 
     # Always write a per-run log so users can inspect the actual error messages.
     $logDir = Join-Path $env:LOCALAPPDATA 'WinTune\logs'
