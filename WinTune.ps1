@@ -205,18 +205,38 @@ $ui.CleanOpenLogBtn.Add_Click({
 
 # --- Boost tab ---
 $ui.BoostFreeRamBtn.Add_Click({
-    Set-Status "Trimming working sets..."
+    if ($script:BoostOp) { Set-Status "RAM trim already running."; return }
+
     $ui.BoostFreeRamBtn.IsEnabled = $false
-    try {
-        $r = Clear-WorkingSets
-        $msg = "Trimmed $($r.ProcessesTrimmed) process(es) (skipped $($r.ProcessesSkipped)). Freed approx $(Format-Bytes -Bytes $r.BytesFreed)."
-        $ui.BoostResultLbl.Text = $msg
-        Set-Status $msg
-    } catch {
-        Set-Status "Free RAM error: $($_.Exception.Message)"
-    } finally {
-        $ui.BoostFreeRamBtn.IsEnabled = $true
+    Set-Status "Trimming working sets..."
+
+    $script:BoostOp = Start-AsyncOp -Script {
+        param($modPath, $Progress)
+        Import-Module $modPath -Force
+        Clear-WorkingSets
+    } -Arguments @{
+        modPath = (Join-Path $ScriptRoot 'modules\Boost.psm1')
     }
+
+    $script:BoostPoller = New-Object System.Windows.Threading.DispatcherTimer
+    $script:BoostPoller.Interval = [TimeSpan]::FromMilliseconds(150)
+    $script:BoostPoller.Add_Tick({
+        if (Test-AsyncOpComplete $script:BoostOp) {
+            $script:BoostPoller.Stop()
+            $r = Receive-AsyncOp $script:BoostOp
+            $script:BoostOp = $null
+            $ui.BoostFreeRamBtn.IsEnabled = $true
+
+            if (-not $r.Success) {
+                Set-Status "Free RAM error: $($r.Error)"
+                return
+            }
+            $msg = "Trimmed $($r.Result.ProcessesTrimmed) process(es) (skipped $($r.Result.ProcessesSkipped)). Freed approx $(Format-Bytes -Bytes $r.Result.BytesFreed)."
+            $ui.BoostResultLbl.Text = $msg
+            Set-Status $msg
+        }
+    })
+    $script:BoostPoller.Start()
 })
 
 $ui.BoostRestartExplorerBtn.Add_Click({
