@@ -16,19 +16,26 @@ function Clear-WorkingSets {
     $totalBefore = 0L
     $totalAfter  = 0L
 
+    # Dispose each Process object after we read its native handle. Without this
+    # the SafeHandles linger until GC, which can pin hundreds of process handles
+    # transiently on systems with many processes.
     Get-Process | ForEach-Object {
-        $totalBefore += $_.WorkingSet64
         try {
-            $h = $_.Handle
-            $ok = [WinTune.Native]::EmptyWorkingSet($h)
+            $totalBefore += $_.WorkingSet64
+            $ok = [WinTune.Native]::EmptyWorkingSet($_.Handle)
             if ($ok) { $trimmed++ } else { $skipped++ }
         } catch {
             $skipped++
+        } finally {
+            $_.Dispose()
         }
     }
 
     Start-Sleep -Milliseconds 600
-    Get-Process | ForEach-Object { $totalAfter += $_.WorkingSet64 }
+
+    Get-Process | ForEach-Object {
+        try { $totalAfter += $_.WorkingSet64 } finally { $_.Dispose() }
+    }
 
     $freedBytes = [math]::Max([long]0, [long]($totalBefore - $totalAfter))
 
