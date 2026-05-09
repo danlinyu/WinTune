@@ -213,15 +213,29 @@ function Disable-Telemetry {
     try {
         if ($svc.Status -eq 'Running') { Stop-Service DiagTrack -Force -ErrorAction Stop }
         Set-Service DiagTrack -StartupType Disabled -ErrorAction Stop
-        # Also Connected User Experiences -- the silent half
-        $cuat = Get-Service dmwappushservice -ErrorAction SilentlyContinue
-        if ($cuat) {
+
+        # Set the Group Policy registry value too. Without this, Windows Update
+        # cumulative updates routinely re-enable DiagTrack -- the policy key is
+        # what makes the disable stick across updates. AllowTelemetry=0 = Security.
+        $polRoot = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection'
+        if (-not (Test-Path $polRoot)) { New-Item -Path $polRoot -Force | Out-Null }
+        Set-ItemProperty -Path $polRoot -Name 'AllowTelemetry' -Type DWord -Value 0 -ErrorAction Stop
+
+        # Also stop dmwappushservice (WAP Push Message Routing Service) where it
+        # still exists. Removed from Win11 24H2; harmless to attempt on systems
+        # without it.
+        $wap = Get-Service dmwappushservice -ErrorAction SilentlyContinue
+        if ($wap) {
             try {
-                if ($cuat.Status -eq 'Running') { Stop-Service dmwappushservice -Force -ErrorAction SilentlyContinue }
+                if ($wap.Status -eq 'Running') { Stop-Service dmwappushservice -Force -ErrorAction SilentlyContinue }
                 Set-Service dmwappushservice -StartupType Disabled -ErrorAction SilentlyContinue
             } catch {}
         }
-        [pscustomobject]@{ Success = $true; Note = 'DiagTrack stopped + disabled. Reversible: Set-Service DiagTrack -StartupType Automatic; Start-Service DiagTrack' }
+
+        [pscustomobject]@{
+            Success = $true
+            Note    = 'DiagTrack stopped + disabled, AllowTelemetry policy = 0. Reversible: Remove-ItemProperty -Path HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection -Name AllowTelemetry; Set-Service DiagTrack -StartupType Automatic; Start-Service DiagTrack'
+        }
     } catch {
         [pscustomobject]@{ Success = $false; Note = $_.Exception.Message }
     }
