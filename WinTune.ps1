@@ -328,25 +328,35 @@ $ui.DedupeRemovePathBtn.Add_Click({
 })
 
 $ui.DedupeScanBtn.Add_Click({
+    if ($script:DedupeOp) { Set-Status "Dedupe scan already running."; return }
+
     $paths = @($ui.DedupePathsList.Items)
     if (-not $paths -or $paths.Count -eq 0) {
         Set-Status "No paths to scan. Click 'Defaults' or 'Add path...' first."
         return
     }
-    $minSizeRaw = $ui.DedupeMinSizeCombo.SelectedItem.Tag
-    $minSize    = [long]$minSizeRaw
+    $minSize = [long]$ui.DedupeMinSizeCombo.SelectedItem.Tag
 
-    $ui.DedupeScanBtn.IsEnabled = $false
-    $ui.DedupeStatusLbl.Text    = "Scanning..."
+    $ui.DedupeScanBtn.IsEnabled   = $false
+    $ui.DedupeCancelBtn.IsEnabled = $true
+    $ui.DedupeStatusLbl.Text      = "Scanning..."
     Set-Status "Dedupe scan starting on $($paths.Count) path(s)..."
 
-    # Force the UI to repaint before the synchronous scan blocks the dispatcher.
-    $window.Dispatcher.Invoke([Action]{}, [System.Windows.Threading.DispatcherPriority]::Render)
+    $script:DedupeOp = Start-AsyncOp -Script {
+        param($paths, $minSize, $modPath, $Progress)
+        Import-Module $modPath -Force
+        Find-Duplicates -Paths $paths -MinSizeBytes $minSize -OnProgress $Progress
+    } -Arguments @{
+        paths   = $paths
+        minSize = $minSize
+        modPath = (Join-Path $ScriptRoot 'modules\Dedup.psm1')
+    }
 
-    try {
-        $progressCb = {
-            param($info)
-            try {
+    $script:DedupePoller = New-Object System.Windows.Threading.DispatcherTimer
+    $script:DedupePoller.Interval = [TimeSpan]::FromMilliseconds(150)
+    $script:DedupePoller.Add_Tick({
+        try {
+            foreach ($info in (Receive-AsyncProgress $script:DedupeOp)) {
                 $msg = switch ($info.Phase) {
                     'Scan'      { "Phase 1/2: scanned $($info.FilesSeen) files..." }
                     'HashStart' { "Phase 2/2: hashing $($info.Candidates) size-collision candidates..." }
@@ -354,37 +364,61 @@ $ui.DedupeScanBtn.Add_Click({
                     'Done'      { "Done. $($info.Groups) duplicate group(s) found." }
                     default     { '' }
                 }
-                $ui.DedupeStatusLbl.Text = $msg
-                $window.Dispatcher.Invoke([Action]{}, [System.Windows.Threading.DispatcherPriority]::Background)
-            } catch {}
-        }
-        $groups = @(Find-Duplicates -Paths $paths -MinSizeBytes $minSize -OnProgress $progressCb)
-        $script:DedupeGroups = $groups
-
-        # Flatten for grid display.
-        $rows = foreach ($g in $groups) {
-            foreach ($f in $g.Files) {
-                [pscustomobject]@{
-                    Group     = $g.GroupId
-                    Size      = (Format-Bytes -Bytes $g.SizeBytes)
-                    Path      = $f.FullName
-                    Modified  = $f.LastWriteTime.ToString('yyyy-MM-dd HH:mm')
-                    SizeBytes = [long]$g.SizeBytes
-                }
+                if ($msg) { $ui.DedupeStatusLbl.Text = $msg }
             }
-        }
-        $ui.DedupeGrid.ItemsSource = @($rows)
 
-        $totalWasted = ($groups | Measure-Object -Property WastedBytes -Sum).Sum
-        if (-not $totalWasted) { $totalWasted = 0 }
-        $msg = "Found $($groups.Count) group(s), $((@($rows)).Count) duplicate file(s). Reclaimable: $(Format-Bytes -Bytes $totalWasted)."
-        $ui.DedupeStatusLbl.Text = $msg
-        Set-Status $msg
-    } catch {
-        Set-Status "Dedupe scan error: $($_.Exception.Message)"
-    } finally {
-        $ui.DedupeScanBtn.IsEnabled = $true
+            if (Test-AsyncOpComplete $script:DedupeOp) {
+                $script:DedupePoller.Stop()
+                $r = Receive-AsyncOp $script:DedupeOp
+                $script:DedupeOp = $null
+                $ui.DedupeScanBtn.IsEnabled   = $true
+                $ui.DedupeCancelBtn.IsEnabled = $false
+
+                if (-not $r.Success) {
+                    $ui.DedupeStatusLbl.Text = "Scan error: $($r.Error)"
+                    Set-Status "Dedupe scan error: $($r.Error)"
+                    return
+                }
+
+                $groups = @($r.Result)
+                $script:DedupeGroups = $groups
+
+                $rows = foreach ($g in $groups) {
+                    foreach ($f in $g.Files) {
+                        [pscustomobject]@{
+                            Group     = $g.GroupId
+                            Size      = (Format-Bytes -Bytes $g.SizeBytes)
+                            Path      = $f.FullName
+                            Modified  = $f.LastWriteTime.ToString('yyyy-MM-dd HH:mm')
+                            SizeBytes = [long]$g.SizeBytes
+                        }
+                    }
+                }
+                $ui.DedupeGrid.ItemsSource = @($rows)
+
+                $totalWasted = ($groups | Measure-Object -Property WastedBytes -Sum).Sum
+                if (-not $totalWasted) { $totalWasted = 0 }
+                $msg = "Found $($groups.Count) group(s), $((@($rows)).Count) duplicate file(s). Reclaimable: $(Format-Bytes -Bytes $totalWasted)."
+                $ui.DedupeStatusLbl.Text = $msg
+                Set-Status $msg
+            }
+        } catch {
+            Set-Status "Dedupe poller error: $($_.Exception.Message)"
+        }
+    })
+    $script:DedupePoller.Start()
+})
+
+$ui.DedupeCancelBtn.Add_Click({
+    if ($script:DedupeOp) {
+        Stop-AsyncOp $script:DedupeOp
+        $script:DedupeOp = $null
     }
+    if ($script:DedupePoller) { $script:DedupePoller.Stop(); $script:DedupePoller = $null }
+    $ui.DedupeScanBtn.IsEnabled   = $true
+    $ui.DedupeCancelBtn.IsEnabled = $false
+    $ui.DedupeStatusLbl.Text      = "Cancelled."
+    Set-Status "Dedupe scan cancelled."
 })
 
 function Set-DedupeSelection {

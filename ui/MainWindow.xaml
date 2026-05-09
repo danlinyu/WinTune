@@ -213,6 +213,8 @@
                         <Button x:Name="DedupeScanBtn" Content="Scan for Duplicates" Width="200"
                                 Background="#FF2D6CDF" Foreground="White" FontWeight="SemiBold"
                                 Margin="20,0,0,0"/>
+                        <Button x:Name="DedupeCancelBtn" Content="Cancel" Width="80"
+                                Margin="6,0,0,0" IsEnabled="False"/>
                         <TextBlock x:Name="DedupeStatusLbl" VerticalAlignment="Center"
                                    Margin="20,0,0,0" FontFamily="Consolas"/>
                     </StackPanel>
