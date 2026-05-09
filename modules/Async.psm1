@@ -87,12 +87,14 @@ function Test-AsyncOpComplete {
 
 function Receive-AsyncProgress {
     # Drains all queued progress payloads. Returns array (possibly empty).
+    # Unary-comma wraps so PowerShell's return-value unwrapping doesn't turn
+    # an empty array back into $null.
     param($Op)
-    if (-not $Op) { return @() }
+    if (-not $Op) { return ,@() }
     $items = New-Object System.Collections.ArrayList
     $msg = $null
     while ($Op.ProgressQueue.TryDequeue([ref]$msg)) { [void]$items.Add($msg) }
-    return $items.ToArray()
+    return ,$items.ToArray()
 }
 
 function Receive-AsyncOp {
