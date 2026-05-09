@@ -242,17 +242,47 @@ $ui.BoostOpenTaskMgrBtn.Add_Click({ Open-StartupTaskManager; Set-Status "Task Ma
 
 # --- Diagnose tab ---
 function Run-Diagnose {
+    # Async + fire-and-forget. CIM queries inside Invoke-Diagnostics typically
+    # take 1-2 seconds; previously this blocked the dispatcher (visible as a
+    # frozen window on startup since Add_Loaded calls this synchronously).
+    if ($script:DiagOp) { return }   # already in-flight
+
+    $ui.DiagRunBtn.IsEnabled = $false
     Set-Status "Running diagnostics..."
-    try {
-        $f = @(Invoke-Diagnostics)
-        $ui.DiagFindingsGrid.ItemsSource = $f
-        $red    = ($f | Where-Object Severity -eq 'Red'    | Measure-Object).Count
-        $yellow = ($f | Where-Object Severity -eq 'Yellow' | Measure-Object).Count
-        $green  = ($f | Where-Object Severity -eq 'Green'  | Measure-Object).Count
-        $ui.DiagSummaryLbl.Text = "Findings: $red red, $yellow yellow, $green green"
-        $ui.DiagSummaryLbl.Foreground = if ($red -gt 0) { 'Red' } elseif ($yellow -gt 0) { '#FFB58900' } else { '#FF59A14F' }
-        Set-Status "Diagnostics done. $red red, $yellow yellow, $green green."
-    } catch { Set-Status "Diagnostics error: $($_.Exception.Message)" }
+
+    $script:DiagOp = Start-AsyncOp -Script {
+        param($modPath, $Progress)
+        Import-Module $modPath -Force
+        Invoke-Diagnostics
+    } -Arguments @{
+        modPath = (Join-Path $ScriptRoot 'modules\Diagnose.psm1')
+    }
+
+    $script:DiagPoller = New-Object System.Windows.Threading.DispatcherTimer
+    $script:DiagPoller.Interval = [TimeSpan]::FromMilliseconds(150)
+    $script:DiagPoller.Add_Tick({
+        if (Test-AsyncOpComplete $script:DiagOp) {
+            $script:DiagPoller.Stop()
+            $r = Receive-AsyncOp $script:DiagOp
+            $script:DiagOp = $null
+            $ui.DiagRunBtn.IsEnabled = $true
+
+            if (-not $r.Success) {
+                Set-Status "Diagnostics error: $($r.Error)"
+                return
+            }
+
+            $f = @($r.Result)
+            $ui.DiagFindingsGrid.ItemsSource = $f
+            $red    = ($f | Where-Object Severity -eq 'Red'    | Measure-Object).Count
+            $yellow = ($f | Where-Object Severity -eq 'Yellow' | Measure-Object).Count
+            $green  = ($f | Where-Object Severity -eq 'Green'  | Measure-Object).Count
+            $ui.DiagSummaryLbl.Text = "Findings: $red red, $yellow yellow, $green green"
+            $ui.DiagSummaryLbl.Foreground = if ($red -gt 0) { 'Red' } elseif ($yellow -gt 0) { '#FFB58900' } else { '#FF59A14F' }
+            Set-Status "Diagnostics done. $red red, $yellow yellow, $green green."
+        }
+    })
+    $script:DiagPoller.Start()
 }
 
 $ui.DiagRunBtn.Add_Click({ Run-Diagnose })
