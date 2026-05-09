@@ -106,13 +106,17 @@ function Invoke-SingleTarget {
                         }
                     } catch { $result.Errors += "stop ${svc}: $($_.Exception.Message)" }
                 }
-                $r = Remove-PathContents -Path 'C:\Windows\SoftwareDistribution\Download'
-                $result.FilesRemoved = $r.FilesRemoved
-                $result.BytesFreed   = $r.BytesFreed
-                $result.Errors       += $r.Errors
-                foreach ($svc in $stoppedSvcs) {
-                    try { Start-Service -Name $svc -ErrorAction Stop }
-                    catch { $result.Errors += "start ${svc}: $($_.Exception.Message)" }
+                # Restart in finally so services come back even if delete throws.
+                try {
+                    $r = Remove-PathContents -Path 'C:\Windows\SoftwareDistribution\Download'
+                    $result.FilesRemoved = $r.FilesRemoved
+                    $result.BytesFreed   = $r.BytesFreed
+                    $result.Errors       += $r.Errors
+                } finally {
+                    foreach ($svc in $stoppedSvcs) {
+                        try { Start-Service -Name $svc -ErrorAction Stop }
+                        catch { $result.Errors += "start ${svc}: $($_.Exception.Message)" }
+                    }
                 }
             }
             'EdgeCache' {
