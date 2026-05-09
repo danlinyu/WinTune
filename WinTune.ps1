@@ -22,6 +22,7 @@ Import-Module (Join-Path $ScriptRoot 'modules\Boost.psm1')    -Force
 Import-Module (Join-Path $ScriptRoot 'modules\Startup.psm1')  -Force
 Import-Module (Join-Path $ScriptRoot 'modules\Diagnose.psm1') -Force
 Import-Module (Join-Path $ScriptRoot 'modules\Dedup.psm1')    -Force
+Import-Module (Join-Path $ScriptRoot 'modules\Async.psm1')    -Force
 #endregion
 
 #region Load XAML
@@ -105,45 +106,92 @@ $ui.CleanSelectNoneBtn.Add_Click({
 })
 
 $ui.CleanRunBtn.Add_Click({
+    if ($script:CleanupOp) { Set-Status "Cleanup already running."; return }
+
     $targets = Get-SelectedTargets
     if (-not $targets -or $targets.Count -eq 0) {
         Set-Status "No cleanup targets selected."
         return
     }
-    $ui.CleanRunBtn.IsEnabled = $false
+
+    $ui.CleanRunBtn.IsEnabled    = $false
+    $ui.CleanCancelBtn.IsEnabled = $true
     Set-Status "Cleaning $($targets.Count) target(s)..."
-    try {
-        $results = Invoke-Cleanup -Targets $targets
-        $totalBytes = ($results | Measure-Object -Property BytesFreed -Sum).Sum
-        $display = $results | ForEach-Object {
-            $note = if ($_.Skipped) {
-                $_.SkipReason
-            } elseif ($_.Errors.Count) {
-                $sample = ($_.Errors | Select-Object -First 1) -as [string]
-                if ($sample.Length -gt 90) { $sample = $sample.Substring(0,87) + '...' }
-                "$($_.Errors.Count) error(s): $sample"
-            } else { '' }
-            [pscustomobject]@{
-                Target     = $_.Target
-                Status     = if ($_.Skipped) { 'Skipped' } elseif ($_.Errors.Count -gt 0) { 'Partial' } else { 'OK' }
-                Items      = $_.FilesRemoved
-                Freed      = (Format-Bytes -Bytes $_.BytesFreed)
-                Note       = $note
-            }
-        }
-        $ui.CleanResultsGrid.ItemsSource = @($display)
-        $ui.CleanTotalLbl.Text = "Freed: $(Format-Bytes -Bytes $totalBytes)"
-        $logPath = Get-LastCleanupLog
-        if ($logPath) {
-            $ui.CleanOpenLogBtn.IsEnabled = $true
-            $ui.CleanOpenLogBtn.Tag = $logPath
-        }
-        Set-Status "Cleanup done. Freed $(Format-Bytes -Bytes $totalBytes). Log: $logPath"
-    } catch {
-        Set-Status "Cleanup error: $($_.Exception.Message)"
-    } finally {
-        $ui.CleanRunBtn.IsEnabled = $true
+
+    $script:CleanupOp = Start-AsyncOp -Script {
+        param($targets, $modPath, $Progress)
+        Import-Module $modPath -Force
+        Invoke-Cleanup -Targets $targets -OnProgress $Progress
+    } -Arguments @{
+        targets = $targets
+        modPath = (Join-Path $ScriptRoot 'modules\Cleanup.psm1')
     }
+
+    $script:CleanupPoller = New-Object System.Windows.Threading.DispatcherTimer
+    $script:CleanupPoller.Interval = [TimeSpan]::FromMilliseconds(150)
+    $script:CleanupPoller.Add_Tick({
+        try {
+            foreach ($info in (Receive-AsyncProgress $script:CleanupOp)) {
+                if ($info.Phase -eq 'Start') {
+                    Set-Status "[$($info.Index)/$($info.Total)] Cleaning $($info.Target)..."
+                }
+            }
+
+            if (Test-AsyncOpComplete $script:CleanupOp) {
+                $script:CleanupPoller.Stop()
+                $r = Receive-AsyncOp $script:CleanupOp
+                $script:CleanupOp = $null
+                $ui.CleanRunBtn.IsEnabled    = $true
+                $ui.CleanCancelBtn.IsEnabled = $false
+
+                if (-not $r.Success) {
+                    Set-Status "Cleanup error: $($r.Error)"
+                    return
+                }
+
+                $results = @($r.Result)
+                $totalBytes = ($results | Measure-Object -Property BytesFreed -Sum).Sum
+                $display = $results | ForEach-Object {
+                    $note = if ($_.Skipped) {
+                        $_.SkipReason
+                    } elseif ($_.Errors.Count) {
+                        $sample = ($_.Errors | Select-Object -First 1) -as [string]
+                        if ($sample.Length -gt 90) { $sample = $sample.Substring(0,87) + '...' }
+                        "$($_.Errors.Count) error(s): $sample"
+                    } else { '' }
+                    [pscustomobject]@{
+                        Target = $_.Target
+                        Status = if ($_.Skipped) { 'Skipped' } elseif ($_.Errors.Count -gt 0) { 'Partial' } else { 'OK' }
+                        Items  = $_.FilesRemoved
+                        Freed  = (Format-Bytes -Bytes $_.BytesFreed)
+                        Note   = $note
+                    }
+                }
+                $ui.CleanResultsGrid.ItemsSource = @($display)
+                $ui.CleanTotalLbl.Text = "Freed: $(Format-Bytes -Bytes $totalBytes)"
+                $logPath = Get-LastCleanupLog
+                if ($logPath) {
+                    $ui.CleanOpenLogBtn.IsEnabled = $true
+                    $ui.CleanOpenLogBtn.Tag = $logPath
+                }
+                Set-Status "Cleanup done. Freed $(Format-Bytes -Bytes $totalBytes). Log: $logPath"
+            }
+        } catch {
+            Set-Status "Cleanup poller error: $($_.Exception.Message)"
+        }
+    })
+    $script:CleanupPoller.Start()
+})
+
+$ui.CleanCancelBtn.Add_Click({
+    if ($script:CleanupOp) {
+        Stop-AsyncOp $script:CleanupOp
+        $script:CleanupOp = $null
+    }
+    if ($script:CleanupPoller) { $script:CleanupPoller.Stop(); $script:CleanupPoller = $null }
+    $ui.CleanRunBtn.IsEnabled    = $true
+    $ui.CleanCancelBtn.IsEnabled = $false
+    Set-Status "Cleanup cancelled (in-flight target may still complete)."
 })
 
 $ui.CleanOpenLogBtn.Add_Click({

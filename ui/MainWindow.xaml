@@ -121,6 +121,7 @@
 
                     <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,4,0,10">
                         <Button x:Name="CleanRunBtn"      Content="Run Cleanup"        Background="#FF2D6CDF" Foreground="White" FontWeight="SemiBold" Width="160"/>
+                        <Button x:Name="CleanCancelBtn"   Content="Cancel" Width="80" Margin="6,4,0,4" IsEnabled="False"/>
                         <Button x:Name="CleanSelectAllBtn"  Content="Select all"  Margin="10,4,0,4"/>
                         <Button x:Name="CleanSelectNoneBtn" Content="Clear all"   Margin="6,4,0,4"/>
                         <Button x:Name="CleanOpenLogBtn"    Content="Open last log" Margin="6,4,0,4" IsEnabled="False"/>
