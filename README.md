@@ -91,6 +91,11 @@ If you want the heavier stuff, use Sysinternals' RAMMap or Autoruns by hand.
 
 ## Install & run
 
+WinTune ships in two flavors: the original PowerShell + WPF script, and a
+new self-contained C# WPF executable on the `csharp-port` branch.
+
+### PowerShell version (main branch — no install required)
+
 1. Clone or download this repo:
    ```powershell
    git clone https://github.com/danlinyu/WinTune.git
@@ -99,8 +104,23 @@ If you want the heavier stuff, use Sysinternals' RAMMap or Autoruns by hand.
 3. Approve the UAC prompt (admin rights are needed to clear System Temp,
    Windows Update cache, and Prefetch).
 
-That's it — no install step, no dependencies beyond the Windows PowerShell 5.1
-that ships with every Windows 10 / 11 install.
+No install step, no dependencies beyond the Windows PowerShell 5.1 that ships
+with every Windows 10 / 11 install.
+
+### Self-contained .exe version (csharp-port branch)
+
+Single 63 MB `WinTune.exe`, no PowerShell or .NET runtime needed on the
+target machine. Build it yourself with the .NET 10 SDK:
+
+```powershell
+git checkout csharp-port
+dotnet publish src/WinTune.App/WinTune.App.csproj -c Release -r win-x64 -o publish/win-x64
+.\publish\win-x64\WinTune.exe
+```
+
+UAC will prompt automatically (the app manifest requests `requireAdministrator`).
+The published `.exe` is signed-able and code-signed builds are produced via
+the GitHub Actions workflow at `.github/workflows/dotnet.yml`.
 
 ### How safe is it?
 
