@@ -562,7 +562,22 @@ $window.Add_Loaded({
     }
 })
 
-$window.Add_Closed({ try { $timer.Stop() } catch {} })
+$window.Add_Closed({
+    # Stop dashboard refresh.
+    try { $timer.Stop() } catch {}
+
+    # Cancel any in-flight background ops and stop their pollers, otherwise the
+    # process can linger after the window closes (especially during a long
+    # dedup scan).
+    foreach ($n in 'CleanupOp','DedupeOp','DiagOp','BoostOp') {
+        $op = Get-Variable -Name $n -Scope Script -ValueOnly -ErrorAction SilentlyContinue
+        if ($op) { try { Stop-AsyncOp $op } catch {} }
+    }
+    foreach ($n in 'CleanupPoller','DedupePoller','DiagPoller','BoostPoller') {
+        $p = Get-Variable -Name $n -Scope Script -ValueOnly -ErrorAction SilentlyContinue
+        if ($p) { try { $p.Stop() } catch {} }
+    }
+})
 #endregion
 
 # Show the window. Suppress null output when WPF returns Nullable<bool>.
