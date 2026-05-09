@@ -285,6 +285,27 @@ $timer = New-Object System.Windows.Threading.DispatcherTimer
 $timer.Interval = [TimeSpan]::FromSeconds(2)
 $timer.Add_Tick({ try { Update-Dashboard } catch { Set-Status "Dashboard refresh failed: $($_.Exception.Message)" } })
 
+# --- Async-op pollers ---
+# Created once at script top level so the Add_Tick scriptblocks bind to the
+# script's session state. Scriptblocks created at runtime inside click
+# handlers do not -- WPF dispatches them in a context where script-scope
+# function lookup fails. Click handlers re-Start() these pre-wired timers.
+$script:CleanupPoller = New-Object System.Windows.Threading.DispatcherTimer
+$script:CleanupPoller.Interval = [TimeSpan]::FromMilliseconds(150)
+$script:CleanupPoller.Add_Tick({ Update-CleanupPoll })
+
+$script:DedupePoller = New-Object System.Windows.Threading.DispatcherTimer
+$script:DedupePoller.Interval = [TimeSpan]::FromMilliseconds(150)
+$script:DedupePoller.Add_Tick({ Update-DedupePoll })
+
+$script:DiagPoller = New-Object System.Windows.Threading.DispatcherTimer
+$script:DiagPoller.Interval = [TimeSpan]::FromMilliseconds(150)
+$script:DiagPoller.Add_Tick({ Update-DiagPoll })
+
+$script:BoostPoller = New-Object System.Windows.Threading.DispatcherTimer
+$script:BoostPoller.Interval = [TimeSpan]::FromMilliseconds(150)
+$script:BoostPoller.Add_Tick({ Update-BoostPoll })
+
 # --- Cleanup tab ---
 $ui.CleanSelectAllBtn.Add_Click({
     foreach ($n in 'ChkUserTemp','ChkSystemTemp','ChkPrefetch','ChkWER','ChkWindowsUpdate','ChkEdgeCache','ChkChromeCache','ChkFirefoxCache','ChkRecycleBin','ChkDNSCache') {
@@ -319,9 +340,6 @@ $ui.CleanRunBtn.Add_Click({
         modPath = (Join-Path $ScriptRoot 'modules\Cleanup.psm1')
     }
 
-    $script:CleanupPoller = New-Object System.Windows.Threading.DispatcherTimer
-    $script:CleanupPoller.Interval = [TimeSpan]::FromMilliseconds(150)
-    $script:CleanupPoller.Add_Tick({ Update-CleanupPoll })
     $script:CleanupPoller.Start()
 })
 
@@ -330,7 +348,7 @@ $ui.CleanCancelBtn.Add_Click({
         Stop-AsyncOp $script:CleanupOp
         $script:CleanupOp = $null
     }
-    if ($script:CleanupPoller) { $script:CleanupPoller.Stop(); $script:CleanupPoller = $null }
+    try { $script:CleanupPoller.Stop() } catch {}
     $ui.CleanRunBtn.IsEnabled    = $true
     $ui.CleanCancelBtn.IsEnabled = $false
     Set-Status "Cleanup cancelled (in-flight target may still complete)."
@@ -360,9 +378,6 @@ $ui.BoostFreeRamBtn.Add_Click({
         modPath = (Join-Path $ScriptRoot 'modules\Boost.psm1')
     }
 
-    $script:BoostPoller = New-Object System.Windows.Threading.DispatcherTimer
-    $script:BoostPoller.Interval = [TimeSpan]::FromMilliseconds(150)
-    $script:BoostPoller.Add_Tick({ Update-BoostPoll })
     $script:BoostPoller.Start()
 })
 
@@ -405,9 +420,6 @@ function Run-Diagnose {
         modPath = (Join-Path $ScriptRoot 'modules\Diagnose.psm1')
     }
 
-    $script:DiagPoller = New-Object System.Windows.Threading.DispatcherTimer
-    $script:DiagPoller.Interval = [TimeSpan]::FromMilliseconds(150)
-    $script:DiagPoller.Add_Tick({ Update-DiagPoll })
     $script:DiagPoller.Start()
 }
 
@@ -508,9 +520,6 @@ $ui.DedupeScanBtn.Add_Click({
         modPath = (Join-Path $ScriptRoot 'modules\Dedup.psm1')
     }
 
-    $script:DedupePoller = New-Object System.Windows.Threading.DispatcherTimer
-    $script:DedupePoller.Interval = [TimeSpan]::FromMilliseconds(150)
-    $script:DedupePoller.Add_Tick({ Update-DedupePoll })
     $script:DedupePoller.Start()
 })
 
@@ -519,7 +528,7 @@ $ui.DedupeCancelBtn.Add_Click({
         Stop-AsyncOp $script:DedupeOp
         $script:DedupeOp = $null
     }
-    if ($script:DedupePoller) { $script:DedupePoller.Stop(); $script:DedupePoller = $null }
+    try { $script:DedupePoller.Stop() } catch {}
     $ui.DedupeScanBtn.IsEnabled   = $true
     $ui.DedupeCancelBtn.IsEnabled = $false
     $ui.DedupeStatusLbl.Text      = "Cancelled."
