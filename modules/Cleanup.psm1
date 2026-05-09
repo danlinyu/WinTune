@@ -11,6 +11,31 @@ $script:ValidTargets = @(
 
 function Get-CleanupTargets { $script:ValidTargets }
 
+function Test-IsReparsePoint {
+    param([System.IO.FileSystemInfo]$Item)
+    return [bool]($Item.Attributes -band [System.IO.FileAttributes]::ReparsePoint)
+}
+
+function Remove-DirectoryTreeSafe {
+    # Recursive delete that NEVER follows reparse points (junctions, symlinks).
+    # Defends against a malicious junction inside a cleanup target redirecting
+    # the recursive delete to e.g. C:\Windows\System32. A parent that holds a
+    # skipped reparse-point child will fail with "directory not empty" -- that
+    # is the intended signal that something unexpected lives there.
+    param([string]$Path)
+
+    Get-ChildItem -LiteralPath $Path -Force -ErrorAction SilentlyContinue |
+        ForEach-Object {
+            if (Test-IsReparsePoint $_) { return }   # skip link, do not recurse
+            if ($_.PSIsContainer) {
+                Remove-DirectoryTreeSafe -Path $_.FullName
+            } else {
+                [System.IO.File]::Delete($_.FullName)
+            }
+        }
+    [System.IO.Directory]::Delete($Path, $false)
+}
+
 function Remove-PathContents {
     param([string]$Path, [switch]$Recurse)
 
@@ -25,16 +50,23 @@ function Remove-PathContents {
     Get-ChildItem -LiteralPath $Path -Force -ErrorAction SilentlyContinue |
         ForEach-Object {
             try {
+                # Skip reparse-point entries at top level: do not delete the
+                # link, do not follow it. Same defense as Remove-DirectoryTreeSafe.
+                if (Test-IsReparsePoint $_) { return }
+
                 if ($_.PSIsContainer) {
                     $sizeBefore = (Get-ChildItem -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue |
-                        Where-Object { -not $_.PSIsContainer } |
+                        Where-Object {
+                            -not $_.PSIsContainer -and
+                            -not (Test-IsReparsePoint $_)
+                        } |
                         Measure-Object -Property Length -Sum).Sum
-                    Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction Stop
+                    Remove-DirectoryTreeSafe -Path $_.FullName
                     $bytesFreed   += [long]($sizeBefore | ForEach-Object { if ($_) { $_ } else { 0 } })
                     $filesRemoved += 1
                 } else {
                     $bytesFreed   += [long]$_.Length
-                    Remove-Item -LiteralPath $_.FullName -Force -ErrorAction Stop
+                    [System.IO.File]::Delete($_.FullName)
                     $filesRemoved += 1
                 }
             } catch {
