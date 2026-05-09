@@ -20,20 +20,26 @@ WinTune addresses each of these with one click.
 
 ## What it does (and what it deliberately doesn't)
 
-### Three tabs
+### Five tabs
 
 **Dashboard** — live CPU, RAM, and disk-C: bars (refresh every 2 s) plus a top-10
 process list sorted by working-set RAM.
 
 **Clean** — pick what to clear, click Run:
 - User Temp (`%TEMP%`)
-- System Temp (`C:\Windows\Temp`)
+- System Temp (`%SystemRoot%\Temp`)
 - Windows Prefetch
 - Windows Error Reports (`WER\Report{Archive,Queue}`)
-- Windows Update download cache (stops `wuauserv` + `bits` briefly, then restarts them)
+- Windows Update download cache (stops `wuauserv` + `bits` briefly, then restarts
+  them — restart is in a `finally` block so the services come back even if the
+  delete fails)
 - Edge / Chrome / Firefox caches (skipped if the browser is running — close it first)
 - Empty Recycle Bin
 - Flush DNS resolver cache
+
+Reparse points (junctions, symlinks) inside any cleanup target are skipped — never
+followed — so a stray junction can't redirect the recursive delete somewhere
+unexpected.
 
 **Boost**
 - Free RAM — calls Win32 `EmptyWorkingSet` on every process. Reduces working-set
@@ -43,6 +49,32 @@ process list sorted by working-set RAM.
 - Read-only listing of every startup program (WMI + registry Run keys + Startup
   folders), with a button that opens **Task Manager → Startup** if you want to
   disable any of them yourself.
+
+**Diagnose** — find what's making Explorer slow. Each finding is colour-coded
+(Red = act, Yellow = worth a look, Green = OK) with a one-line hint. Checks
+include disk health, free-space pressure, multiple cloud sync shell extensions,
+Quick Access bloat, Search index emptiness, DiagTrack telemetry, the Win11
+right-click overlay, pagefile placement, startup-app count, and RAM pressure.
+
+Backed by safe one-click fixes:
+- **Reset Quick Access** — clears stale `Recent` and `AutomaticDestinations`
+  shortcuts, a common cause of Explorer hangs on dead network paths.
+- **Disable Telemetry** — stops + disables `DiagTrack` *and* sets the
+  `AllowTelemetry` Group Policy value so Windows Update cumulative updates
+  don't silently re-enable it.
+- **Apply Classic Right-Click** — restores the Win10-style instant context
+  menu (Win11's "Show more options" overlay is the slow path).
+- **Rebuild Search Index** — kicks Windows Search to re-index from scratch.
+- **Undo Classic Right-Click** — reverts the above.
+
+**Dedupe** — find and remove duplicate files in user folders.
+- Two-pass scan: group by exact size first, then SHA1-hash only size-matches.
+- Skips reparse points (OneDrive on-demand files won't trigger a download) and
+  system files.
+- Auto-select helpers: keep oldest / keep newest / keep shortest path.
+- Safety stop: refuses to delete every file in a duplicate group — you must
+  un-tick at least one row per group to keep a copy.
+- Deletes go to the Recycle Bin so you can recover.
 
 ### Out of scope on purpose
 
@@ -96,21 +128,31 @@ WinTune/
 ├── Launch-WinTune.cmd     double-clickable wrapper
 ├── modules/
 │   ├── Monitor.psm1       Get-PerfSnapshot, Get-TopProcesses
-│   ├── Cleanup.psm1       Invoke-Cleanup, Get-CleanupTargets, Format-Bytes
+│   ├── Cleanup.psm1       Invoke-Cleanup, Get-CleanupTargets, Format-Bytes,
+│   │                      Get-LastCleanupLog
 │   ├── Boost.psm1         Clear-WorkingSets, Restart-Explorer, Clear-DNSCacheSafe
-│   └── Startup.psm1       Get-StartupApps, Open-StartupTaskManager
+│   ├── Startup.psm1       Get-StartupApps, Open-StartupTaskManager
+│   ├── Diagnose.psm1      Invoke-Diagnostics + Reset-QuickAccess, Disable-Telemetry,
+│   │                      Enable-/Disable-ClassicRightClick, Start-SearchIndexRebuild
+│   └── Dedup.psm1         Find-Duplicates, Remove-DuplicateFiles, Get-DefaultScanRoots
 ├── ui/MainWindow.xaml     WPF layout (loaded at runtime by WinTune.ps1)
 ├── README.md
 └── LICENSE                MIT
 ```
 
-The four modules are pure functions — easy to dot-source and use from any
+The six modules are pure functions — easy to dot-source and use from any
 PowerShell prompt:
 
 ```powershell
 Import-Module .\modules\Monitor.psm1
 Get-PerfSnapshot
 Get-TopProcesses -Count 5
+
+Import-Module .\modules\Diagnose.psm1
+Invoke-Diagnostics | Format-Table Severity, Title, Detail
+
+Import-Module .\modules\Dedup.psm1
+Find-Duplicates -Paths $HOME\Downloads -MinSizeBytes 10MB
 ```
 
 ## License
