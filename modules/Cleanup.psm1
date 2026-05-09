@@ -104,13 +104,13 @@ function Invoke-SingleTarget {
                 $result.Errors       = $r.Errors
             }
             'SystemTemp' {
-                $r = Remove-PathContents -Path 'C:\Windows\Temp'
+                $r = Remove-PathContents -Path (Join-Path $env:SystemRoot 'Temp')
                 $result.FilesRemoved = $r.FilesRemoved
                 $result.BytesFreed   = $r.BytesFreed
                 $result.Errors       = $r.Errors
             }
             'Prefetch' {
-                $r = Remove-PathContents -Path 'C:\Windows\Prefetch'
+                $r = Remove-PathContents -Path (Join-Path $env:SystemRoot 'Prefetch')
                 $result.FilesRemoved = $r.FilesRemoved
                 $result.BytesFreed   = $r.BytesFreed
                 $result.Errors       = $r.Errors
@@ -140,7 +140,7 @@ function Invoke-SingleTarget {
                 }
                 # Restart in finally so services come back even if delete throws.
                 try {
-                    $r = Remove-PathContents -Path 'C:\Windows\SoftwareDistribution\Download'
+                    $r = Remove-PathContents -Path (Join-Path $env:SystemRoot 'SoftwareDistribution\Download')
                     $result.FilesRemoved = $r.FilesRemoved
                     $result.BytesFreed   = $r.BytesFreed
                     $result.Errors       += $r.Errors

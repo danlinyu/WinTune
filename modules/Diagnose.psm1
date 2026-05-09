@@ -88,7 +88,7 @@ function Invoke-Diagnostics {
     }
 
     # --- Windows Search index
-    $idxBase = 'C:\ProgramData\Microsoft\Search\Data\Applications\Windows\Projects\SystemIndex\Indexer\CiFiles'
+    $idxBase = Join-Path $env:ProgramData 'Microsoft\Search\Data\Applications\Windows\Projects\SystemIndex\Indexer\CiFiles'
     if (Test-Path $idxBase) {
         $idxBytes = (Get-ChildItem $idxBase -Recurse -ErrorAction SilentlyContinue |
             Measure-Object -Property Length -Sum).Sum
