@@ -155,6 +155,22 @@ Import-Module .\modules\Dedup.psm1
 Find-Duplicates -Paths $HOME\Downloads -MinSizeBytes 10MB
 ```
 
+## Development
+
+Run the test gate (PSScriptAnalyzer + Pester) locally:
+
+```powershell
+# Once
+Install-Module Pester           -MinimumVersion 5.5.0 -Force -SkipPublisherCheck -Scope CurrentUser
+Install-Module PSScriptAnalyzer -Force -Scope CurrentUser
+
+# Each commit
+.\Run-Tests.ps1
+```
+
+GitHub Actions runs the same script on every push and PR
+([`.github/workflows/ci.yml`](.github/workflows/ci.yml)).
+
 ## License
 
 MIT — see [LICENSE](LICENSE).

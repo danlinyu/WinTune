@@ -2,6 +2,9 @@
 logs/
 *.log
 
+# Test runner output
+tests/results.xml
+
 # Local toolchain (gh portable, etc.)
 .tools/
 
