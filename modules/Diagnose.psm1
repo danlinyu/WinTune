@@ -166,7 +166,11 @@ function Invoke-Diagnostics {
             'Use Boost tab -> "Free RAM (Empty Working Sets)".') )
     }
 
-    return ,$findings.ToArray()
+    # Emit each finding as its own pipeline item. The earlier `return ,$findings.ToArray()`
+    # form prevented unrolling, so `@(Invoke-Diagnostics)` wrapped the whole
+    # array as a single element and WPF ItemsSource showed one row whose
+    # auto-generated columns were Length/Rank/SyncRoot of an Object[].
+    return $findings.ToArray()
 }
 
 # =====================================================================
