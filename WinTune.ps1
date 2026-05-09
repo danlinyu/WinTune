@@ -256,14 +256,6 @@ $ui.FixRebuildIndexBtn.Add_Click({
 # without re-scanning.
 $script:DedupeGroups = @()
 
-function Format-Bytes-Local {
-    param([long]$B)
-    if ($B -ge 1GB) { return "{0:N2} GB" -f ($B / 1GB) }
-    if ($B -ge 1MB) { return "{0:N2} MB" -f ($B / 1MB) }
-    if ($B -ge 1KB) { return "{0:N2} KB" -f ($B / 1KB) }
-    return "$B B"
-}
-
 function Reset-DedupePaths {
     $ui.DedupePathsList.Items.Clear()
     foreach ($p in (Get-DefaultScanRoots)) { [void]$ui.DedupePathsList.Items.Add($p) }
@@ -326,7 +318,7 @@ $ui.DedupeScanBtn.Add_Click({
             foreach ($f in $g.Files) {
                 [pscustomobject]@{
                     Group     = $g.GroupId
-                    Size      = (Format-Bytes-Local $g.SizeBytes)
+                    Size      = (Format-Bytes -Bytes $g.SizeBytes)
                     Path      = $f.FullName
                     Modified  = $f.LastWriteTime.ToString('yyyy-MM-dd HH:mm')
                     SizeBytes = [long]$g.SizeBytes
@@ -337,7 +329,7 @@ $ui.DedupeScanBtn.Add_Click({
 
         $totalWasted = ($groups | Measure-Object -Property WastedBytes -Sum).Sum
         if (-not $totalWasted) { $totalWasted = 0 }
-        $msg = "Found $($groups.Count) group(s), $((@($rows)).Count) duplicate file(s). Reclaimable: $(Format-Bytes-Local $totalWasted)."
+        $msg = "Found $($groups.Count) group(s), $((@($rows)).Count) duplicate file(s). Reclaimable: $(Format-Bytes -Bytes $totalWasted)."
         $ui.DedupeStatusLbl.Text = $msg
         Set-Status $msg
     } catch {
@@ -367,7 +359,7 @@ function Set-DedupeSelection {
     $n = $ui.DedupeGrid.SelectedItems.Count
     $totalSelectedBytes = 0L
     foreach ($r in $ui.DedupeGrid.SelectedItems) { $totalSelectedBytes += [long]$r.SizeBytes }
-    Set-Status "Selected $n file(s) for deletion ($(Format-Bytes-Local $totalSelectedBytes))."
+    Set-Status "Selected $n file(s) for deletion ($(Format-Bytes -Bytes $totalSelectedBytes))."
 }
 
 $ui.DedupeAutoOldestBtn.Add_Click({
@@ -403,7 +395,7 @@ $ui.DedupeDeleteBtn.Add_Click({
 
     $totalBytes = ($sel | Measure-Object -Property SizeBytes -Sum).Sum
     $confirm = [System.Windows.MessageBox]::Show(
-        "Send $($sel.Count) file(s) ($(Format-Bytes-Local $totalBytes)) to the Recycle Bin?",
+        "Send $($sel.Count) file(s) ($(Format-Bytes -Bytes $totalBytes)) to the Recycle Bin?",
         "WinTune Dedupe -- confirm", 'OKCancel', 'Question')
     if ($confirm -ne 'OK') { return }
 
@@ -411,7 +403,7 @@ $ui.DedupeDeleteBtn.Add_Click({
     Set-Status "Sending $($paths.Count) file(s) to Recycle Bin..."
     try {
         $r = Remove-DuplicateFiles -Paths $paths
-        $msg = "Deleted $($r.Deleted) file(s), freed $(Format-Bytes-Local $r.BytesFreed)."
+        $msg = "Deleted $($r.Deleted) file(s), freed $(Format-Bytes -Bytes $r.BytesFreed)."
         if ($r.Errors.Count) { $msg += " Errors: $($r.Errors.Count)." }
         $ui.DedupeStatusLbl.Text = $msg
         Set-Status $msg
