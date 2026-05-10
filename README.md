@@ -1,8 +1,9 @@
 # WinTune
 
 A small, single-window Windows 11 performance toolkit. Monitor live system load,
-clean accumulated junk, and free memory — all from one place. Pure PowerShell +
-WPF, no installer, no compiled binary.
+clean accumulated junk, and free memory — all from one place. Ships as a
+self-contained C# / WPF / .NET 10 executable; original PowerShell + WPF
+script preserved as a reference implementation.
 
 ## Why this exists
 
@@ -91,36 +92,33 @@ If you want the heavier stuff, use Sysinternals' RAMMap or Autoruns by hand.
 
 ## Install & run
 
-WinTune ships in two flavors: the original PowerShell + WPF script, and a
-new self-contained C# WPF executable on the `csharp-port` branch.
+WinTune ships as a self-contained C# WPF executable. The original PowerShell +
+WPF script is preserved in this repo as a reference implementation.
 
-### PowerShell version (main branch — no install required)
+### Self-contained .exe (recommended)
 
-1. Clone or download this repo:
-   ```powershell
-   git clone https://github.com/danlinyu/WinTune.git
-   ```
-2. Double-click **`Launch-WinTune.cmd`**.
-3. Approve the UAC prompt (admin rights are needed to clear System Temp,
-   Windows Update cache, and Prefetch).
-
-No install step, no dependencies beyond the Windows PowerShell 5.1 that ships
-with every Windows 10 / 11 install.
-
-### Self-contained .exe version (csharp-port branch)
-
-Single 63 MB `WinTune.exe`, no PowerShell or .NET runtime needed on the
-target machine. Build it yourself with the .NET 10 SDK:
+Single ~63 MB `WinTune.exe`, no PowerShell or .NET runtime needed on the
+target machine. Either grab the latest CI artifact from the
+[Actions tab](https://github.com/danlinyu/WinTune/actions) or build it
+yourself with the .NET 10 SDK:
 
 ```powershell
-git checkout csharp-port
 dotnet publish src/WinTune.App/WinTune.App.csproj -c Release -r win-x64 -o publish/win-x64
 .\publish\win-x64\WinTune.exe
 ```
 
 UAC will prompt automatically (the app manifest requests `requireAdministrator`).
-The published `.exe` is signed-able and code-signed builds are produced via
-the GitHub Actions workflow at `.github/workflows/dotnet.yml`.
+
+### PowerShell version (reference implementation)
+
+The original Windows PowerShell 5.1 + WPF version is still here for reference.
+WPF on PowerShell 5.1 (STA mode) is required:
+
+```powershell
+powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\WinTune.ps1
+```
+
+Self-elevation is handled inside the script (UAC prompt fires automatically).
 
 ### How safe is it?
 
@@ -137,15 +135,20 @@ browser profile.
 ## Tested on
 
 - Windows 11 Pro for Workstations, build 22631
-- Windows PowerShell 5.1 (the launcher pins this rather than pwsh 7 — WPF on
-  pwsh 7 is currently flaky)
+- C# build: .NET 10 SDK, single-file self-contained `win-x64`
+- PowerShell reference build: Windows PowerShell 5.1 STA (WPF on pwsh 7 is flaky)
 
 ## Project layout
 
 ```
 WinTune/
-├── WinTune.ps1            entry point — builds the WPF window and wires events
-├── Launch-WinTune.cmd     double-clickable wrapper
+├── WinTune.sln            .NET 10 solution (Core + App + Tests)
+├── src/WinTune.Core/      class library — services and DTOs (no WPF refs)
+├── src/WinTune.App/       WPF executable, MVVM via CommunityToolkit.Mvvm
+├── tests/                 xUnit + FluentAssertions
+├── .github/workflows/     CI — dotnet.yml (C#) + ci.yml (PowerShell)
+│
+├── WinTune.ps1            PowerShell reference — builds WPF window directly
 ├── modules/
 │   ├── Monitor.psm1       Get-PerfSnapshot, Get-TopProcesses
 │   ├── Cleanup.psm1       Invoke-Cleanup, Get-CleanupTargets, Format-Bytes,
