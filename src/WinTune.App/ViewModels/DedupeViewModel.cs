@@ -1,4 +1,6 @@
+using System.Collections;
 using System.Collections.ObjectModel;
+using System.Diagnostics;
 using System.IO;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -59,16 +61,24 @@ public sealed partial class DedupeViewModel : ObservableObject, IDisposable
     }
 
     [RelayCommand]
-    private void RemoveScanPath()
+    private void RemoveScanPath(IList? selectedItems)
     {
-        if (string.IsNullOrEmpty(SelectedScanPath)) return;
-        ScanPaths.Remove(SelectedScanPath);
+        var toRemove = SnapshotStrings(selectedItems);
+        if (toRemove.Count == 0)
+        {
+            if (string.IsNullOrEmpty(SelectedScanPath)) return;
+            ScanPaths.Remove(SelectedScanPath);
+            return;
+        }
+        foreach (var p in toRemove) ScanPaths.Remove(p);
     }
 
     [RelayCommand(CanExecute = nameof(CanScan))]
-    private async Task ScanAsync()
+    private async Task ScanAsync(IList? selectedItems)
     {
-        if (ScanPaths.Count == 0) return;
+        var selected = SnapshotStrings(selectedItems);
+        var roots = selected.Count > 0 ? selected : ScanPaths.ToList();
+        if (roots.Count == 0) return;
         IsRunning = true;
         Groups.Clear();
         Selected.Clear();
@@ -88,7 +98,7 @@ public sealed partial class DedupeViewModel : ObservableObject, IDisposable
         try
         {
             var groups = await _dedup.FindDuplicatesAsync(
-                ScanPaths.ToList(),
+                roots,
                 minSizeBytes: SelectedMinSize.Bytes,
                 progress: progress,
                 ct: _cts.Token);
@@ -181,7 +191,38 @@ public sealed partial class DedupeViewModel : ObservableObject, IDisposable
     [RelayCommand]
     private void ClearSelection() => Selected.Clear();
 
+    [RelayCommand]
+    private void RevealInExplorer(DuplicateFile? file)
+    {
+        if (file is null || string.IsNullOrEmpty(file.FullPath)) return;
+        try
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = "explorer.exe",
+                Arguments = $"/select,\"{file.FullPath}\"",
+                UseShellExecute = false,
+            };
+            Process.Start(psi);
+        }
+        catch (Exception ex)
+        {
+            Status = $"Could not open Explorer: {ex.Message}";
+        }
+    }
+
     private bool CanScan() => !IsRunning;
+
+    private static List<string> SnapshotStrings(IList? source)
+    {
+        if (source is null) return new List<string>();
+        var result = new List<string>(source.Count);
+        foreach (var item in source)
+        {
+            if (item is string s) result.Add(s);
+        }
+        return result;
+    }
 
     public void Dispose()
     {
