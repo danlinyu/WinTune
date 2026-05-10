@@ -11,6 +11,7 @@ public interface IDedupService
         bool includeHidden = false,
         IReadOnlySet<string>? excludeExtensions = null,
         IReadOnlySet<string>? excludeDirectoryNames = null,
+        IReadOnlyList<string>? excludePathSubstrings = null,
         IDedupHashCache? hashCache = null,
         IProgress<DedupeProgress>? progress = null,
         CancellationToken ct = default);

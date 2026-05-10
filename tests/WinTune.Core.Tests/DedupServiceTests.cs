@@ -374,6 +374,48 @@ public class DedupServiceTests
     }
 
     [Fact]
+    public async Task FindDuplicatesAsync_excludes_claude_plugins_subtree_by_default()
+    {
+        // Regression test for the dedupe sweep that recycled claude-mem plugin
+        // files because ".claude\plugins\cache" and ".claude\plugins\marketplaces"
+        // contain duplicate content by design (same shape as node_modules).
+        using var dir = new TempDirectory();
+        var content = new byte[2048];
+        for (int i = 0; i < content.Length; i++) content[i] = 0x55;
+
+        dir.CreateFile(".claude/plugins/cache/foo/dup.bin", content);
+        dir.CreateFile(".claude/plugins/marketplaces/foo/dup.bin", content);
+        dir.CreateFile(".antigravity/extensions/x/dup.bin", content);
+        dir.CreateFile(".trae/extensions/y/dup.bin", content);
+        // Genuine user-content duplicate that MUST still be reported.
+        dir.CreateFile("photos/a/img.bin", content);
+        dir.CreateFile("photos/b/img.bin", content);
+
+        IDedupService sut = new DedupService();
+        var groups = await sut.FindDuplicatesAsync(new[] { dir.Path }, minSizeBytes: 1024);
+
+        groups.Should().HaveCount(1, "all .claude\\plugins\\* and .*\\extensions\\* dupes are excluded by default");
+        groups[0].Files.Should().OnlyContain(f => f.FullPath.Contains("photos"));
+    }
+
+    [Fact]
+    public async Task FindDuplicatesAsync_does_not_exclude_claude_projects_subtree()
+    {
+        // .claude\projects holds session transcripts that may legitimately be
+        // duplicated across recovery copies — exclusion must NOT cover this.
+        using var dir = new TempDirectory();
+        var content = new byte[2048];
+        for (int i = 0; i < content.Length; i++) content[i] = 0x77;
+        dir.CreateFile(".claude/projects/recovery/session.jsonl", content);
+        dir.CreateFile(".claude/projects/onedrive/session.jsonl", content);
+
+        IDedupService sut = new DedupService();
+        var groups = await sut.FindDuplicatesAsync(new[] { dir.Path }, minSizeBytes: 1024);
+
+        groups.Should().HaveCount(1, ".claude\\projects is user data, not plugin content — must still be scanned");
+    }
+
+    [Fact]
     public async Task FindDuplicatesAsync_skips_locked_files_without_throwing()
     {
         using var dir = new TempDirectory();

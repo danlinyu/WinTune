@@ -63,6 +63,23 @@ public sealed class DedupService : IDedupService
             ".next", ".nuxt", ".parcel-cache", ".turbo", ".angular", ".cache"
         };
 
+    // Path-substring exclusions for cases where the directory name alone is too
+    // generic to blacklist. Matched case-insensitively against the path of the
+    // directory we're about to recurse into. These cover plugin/extension
+    // content stores in Claude Code and its forks (and VS Code derivatives) —
+    // the same shape as node_modules: tools install duplicate content into
+    // multiple paths by design (cache vs marketplace, install vs upgrade), and
+    // a user-driven dedupe sweep can break the active install.
+    private static readonly string[] DefaultExcludePathSubstrings =
+    {
+        @"\.claude\plugins",
+        @"\.claude-code\plugins",
+        @"\.antigravity\extensions",
+        @"\.trae\extensions",
+        @"\.cursor\extensions",
+        @"\.windsurf\extensions"
+    };
+
     public Task<IReadOnlyList<DuplicateGroup>> FindDuplicatesAsync(
         IReadOnlyCollection<string> roots,
         long minSizeBytes = 1L * 1024 * 1024,
@@ -70,6 +87,7 @@ public sealed class DedupService : IDedupService
         bool includeHidden = false,
         IReadOnlySet<string>? excludeExtensions = null,
         IReadOnlySet<string>? excludeDirectoryNames = null,
+        IReadOnlyList<string>? excludePathSubstrings = null,
         IDedupHashCache? hashCache = null,
         IProgress<DedupeProgress>? progress = null,
         CancellationToken ct = default) =>
@@ -78,7 +96,7 @@ public sealed class DedupService : IDedupService
             // thread, so large hash reads do not evict the user's working set
             // or starve their foreground app of disk.
             Kernel32.RunWithBackgroundIoPriority(() =>
-                ScanCore(roots, minSizeBytes, maxSizeBytes, includeHidden, excludeExtensions, excludeDirectoryNames, hashCache, progress, ct)),
+                ScanCore(roots, minSizeBytes, maxSizeBytes, includeHidden, excludeExtensions, excludeDirectoryNames, excludePathSubstrings, hashCache, progress, ct)),
             ct);
 
     private static List<DuplicateGroup> ScanCore(
@@ -88,6 +106,7 @@ public sealed class DedupService : IDedupService
         bool includeHidden,
         IReadOnlySet<string>? excludeExtensions,
         IReadOnlySet<string>? excludeDirectoryNames,
+        IReadOnlyList<string>? excludePathSubstrings,
         IDedupHashCache? hashCache,
         IProgress<DedupeProgress>? progress,
         CancellationToken ct)
@@ -95,6 +114,7 @@ public sealed class DedupService : IDedupService
         ct.ThrowIfCancellationRequested();
         var excludes = excludeExtensions ?? DefaultExcludeExtensions;
         var excludeDirs = excludeDirectoryNames ?? DefaultExcludeDirectoryNames;
+        var excludeSubstrings = excludePathSubstrings ?? DefaultExcludePathSubstrings;
 
         // Pass 1: enumerate and group by exact byte size, capturing category up-front.
         var bySize = new Dictionary<long, List<EnumeratedFile>>();
@@ -123,7 +143,21 @@ public sealed class DedupService : IDedupService
                 {
                     ShouldIncludePredicate = (ref FileSystemEntry entry) => !entry.IsDirectory,
                     ShouldRecursePredicate = (ref FileSystemEntry entry) =>
-                        !excludeDirs.Contains(entry.FileName.ToString())
+                    {
+                        if (excludeDirs.Contains(entry.FileName.ToString())) return false;
+                        if (excludeSubstrings.Count == 0) return true;
+
+                        // Check the would-be subdirectory path for blacklisted
+                        // substrings (parent + name). Allows excluding cases
+                        // like ".claude\plugins" where "plugins" alone is too
+                        // generic to blacklist as a directory name.
+                        var fullPath = Path.Join(entry.Directory, entry.FileName);
+                        foreach (var needle in excludeSubstrings)
+                        {
+                            if (fullPath.Contains(needle, StringComparison.OrdinalIgnoreCase)) return false;
+                        }
+                        return true;
+                    }
                 };
             }
             catch
