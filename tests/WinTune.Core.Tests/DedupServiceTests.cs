@@ -112,4 +112,32 @@ public class DedupServiceTests
         roots.Should().NotBeEmpty();
         roots.Should().OnlyContain(p => Directory.Exists(p));
     }
+
+    [Fact]
+    public async Task FindDuplicatesAsync_skips_locked_files_without_throwing()
+    {
+        using var dir = new TempDirectory();
+        var content = new byte[2048];
+        for (int i = 0; i < content.Length; i++) content[i] = 0x42;
+        var lockedPath = dir.CreateFile("locked/a.bin", content);
+        var openPath1 = dir.CreateFile("open/b.bin", content);
+        var openPath2 = dir.CreateFile("open/c.bin", content);
+
+        // Hold an exclusive lock on the first file for the duration of the scan.
+        using var lockStream = new FileStream(lockedPath, FileMode.Open, FileAccess.Read, FileShare.None);
+
+        IDedupService sut = new DedupService();
+
+        var act = async () => await sut.FindDuplicatesAsync(
+            new[] { dir.Path },
+            minSizeBytes: 1024);
+
+        await act.Should().NotThrowAsync("locked files must be skipped silently, not abort the scan");
+
+        var groups = await sut.FindDuplicatesAsync(new[] { dir.Path }, minSizeBytes: 1024);
+        groups.Should().HaveCount(1, "the two unlocked files should still group");
+        groups[0].Files.Should().HaveCount(2, "the locked file's hash failed and is excluded; only the two open copies remain");
+        groups[0].Files.Select(f => Path.GetFileName(f.FullPath))
+            .Should().BeEquivalentTo(new[] { "b.bin", "c.bin" });
+    }
 }

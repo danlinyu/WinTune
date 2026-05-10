@@ -1,7 +1,7 @@
 using System.IO;
 using System.Security.Cryptography;
-using Microsoft.VisualBasic.FileIO;
 using WinTune.Core.Models;
+using WinTune.Core.NativeInterop;
 
 namespace WinTune.Core.Services;
 
@@ -33,6 +33,13 @@ public sealed class DedupService : IDedupService
                 ct.ThrowIfCancellationRequested();
                 if (string.IsNullOrEmpty(root) || !Directory.Exists(root)) continue;
 
+                // AttributesToSkip applies to BOTH files and directories: setting
+                // ReparsePoint here means recursion does not follow junctions/symlinks.
+                // Hidden + System excludes %SystemRoot%\System Volume Information,
+                // $Recycle.Bin, and per-user registry hives at recursion time.
+                var skipAttrs = FileAttributes.System | FileAttributes.ReparsePoint;
+                if (!includeHidden) skipAttrs |= FileAttributes.Hidden;
+
                 IEnumerable<FileInfo> files;
                 try
                 {
@@ -40,7 +47,7 @@ public sealed class DedupService : IDedupService
                     {
                         RecurseSubdirectories = true,
                         IgnoreInaccessible = true,
-                        AttributesToSkip = FileAttributes.None
+                        AttributesToSkip = skipAttrs
                     });
                 }
                 catch
@@ -48,17 +55,45 @@ public sealed class DedupService : IDedupService
                     continue;
                 }
 
-                foreach (var fi in files)
+                // Use an explicit enumerator so a sharing-violation IOException on one
+                // file (which IgnoreInaccessible does NOT skip — it only handles
+                // UnauthorizedAccessException) doesn't abort the whole scan.
+                using var enumerator = files.GetEnumerator();
+                while (true)
                 {
                     ct.ThrowIfCancellationRequested();
-                    if (IsSkippablePath(fi, includeHidden)) continue;
-                    if (fi.Length < minSizeBytes) continue;
-                    if (excludes.Contains(fi.Extension)) continue;
+                    FileInfo fi;
+                    try
+                    {
+                        if (!enumerator.MoveNext()) break;
+                        fi = enumerator.Current;
+                    }
+                    catch (OperationCanceledException) { throw; }
+                    catch
+                    {
+                        continue;
+                    }
 
-                    if (!bySize.TryGetValue(fi.Length, out var list))
+                    long length;
+                    string extension;
+                    try
+                    {
+                        if (IsSkippablePath(fi, includeHidden)) continue;
+                        length = fi.Length;
+                        extension = fi.Extension;
+                    }
+                    catch
+                    {
+                        continue;
+                    }
+
+                    if (length < minSizeBytes) continue;
+                    if (excludes.Contains(extension)) continue;
+
+                    if (!bySize.TryGetValue(length, out var list))
                     {
                         list = new List<FileInfo>();
-                        bySize[fi.Length] = list;
+                        bySize[length] = list;
                     }
                     list.Add(fi);
                     scanned++;
@@ -150,37 +185,98 @@ public sealed class DedupService : IDedupService
         Task.Run(() =>
         {
             ct.ThrowIfCancellationRequested();
-            int deleted = 0;
-            long bytes = 0;
-            var errors = new List<string>();
+            if (paths.Count == 0)
+            {
+                return new RemovalResult(0, 0, Array.Empty<string>(), permanent);
+            }
+
+            // Snapshot existence + size before deleting. SHFileOperationW does
+            // the recycle-bin batch atomically and we cannot ask it which files
+            // succeeded — we determine that by checking File.Exists post-call.
+            var snapshot = new List<(string Path, long Size)>(paths.Count);
             foreach (var p in paths)
             {
                 ct.ThrowIfCancellationRequested();
                 try
                 {
-                    if (!File.Exists(p))
+                    if (File.Exists(p))
                     {
-                        errors.Add($"Not found: {p}");
-                        continue;
+                        snapshot.Add((p, new FileInfo(p).Length));
                     }
-                    long size = new FileInfo(p).Length;
-                    if (permanent)
-                    {
-                        File.Delete(p);
-                    }
-                    else
-                    {
-                        FileSystem.DeleteFile(p, UIOption.OnlyErrorDialogs, RecycleOption.SendToRecycleBin);
-                    }
-                    deleted++;
-                    bytes += size;
                 }
-                catch (Exception ex)
+                catch
                 {
-                    errors.Add($"{p}: {ex.Message}");
+                    // Snapshot best-effort; locked or otherwise inaccessible files
+                    // are still passed to the delete call below.
                 }
             }
-            return new RemovalResult(deleted, bytes, errors, permanent);
+
+            if (permanent)
+            {
+                int deletedP = 0;
+                long bytesP = 0;
+                var errorsP = new List<string>();
+                foreach (var (p, size) in snapshot)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    try
+                    {
+                        File.Delete(p);
+                        deletedP++;
+                        bytesP += size;
+                    }
+                    catch (Exception ex)
+                    {
+                        errorsP.Add($"{p}: {ex.Message}");
+                    }
+                }
+                return new RemovalResult(deletedP, bytesP, errorsP, Permanent: true);
+            }
+
+            // Build double-null-terminated wide-string path list for SHFileOperationW.
+            var sb = new System.Text.StringBuilder();
+            foreach (var (p, _) in snapshot)
+            {
+                sb.Append(p).Append('\0');
+            }
+            sb.Append('\0');
+
+            var op = new Shell32.SHFILEOPSTRUCTW
+            {
+                hwnd = IntPtr.Zero,
+                wFunc = Shell32.FO.Delete,
+                pFrom = sb.ToString(),
+                pTo = null,
+                fFlags = Shell32.FOF.AllowUndo
+                       | Shell32.FOF.NoConfirmation
+                       | Shell32.FOF.NoErrorUI
+                       | Shell32.FOF.Silent
+                       | Shell32.FOF.FilesOnly,
+                fAnyOperationsAborted = false,
+                hNameMappings = IntPtr.Zero,
+                lpszProgressTitle = null
+            };
+            // Return value is informational; we determine per-file success by
+            // post-call File.Exists. A non-zero result simply means the call
+            // didn't complete cleanly — captured implicitly in the skipped list.
+            _ = Shell32.SHFileOperationW(ref op);
+
+            int recycled = 0;
+            long bytesFreed = 0;
+            var skipped = new List<string>();
+            foreach (var (p, size) in snapshot)
+            {
+                if (!File.Exists(p))
+                {
+                    recycled++;
+                    bytesFreed += size;
+                }
+                else
+                {
+                    skipped.Add($"{p}: in use or access denied — skipped");
+                }
+            }
+            return new RemovalResult(recycled, bytesFreed, skipped, Permanent: false);
         }, ct);
 
     public IReadOnlyList<string> GetDefaultScanRoots()
