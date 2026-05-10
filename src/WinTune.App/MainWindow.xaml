@@ -204,6 +204,9 @@
                                 Margin="20,0,0,0"
                                 ToolTip="Scans selected paths if any are highlighted; otherwise scans all paths in the list."/>
                         <Button Content="Cancel" Command="{Binding CancelScanCommand}" Width="80" Margin="6,0,0,0"/>
+                        <CheckBox Content="Show app-managed groups" IsChecked="{Binding ShowAppManaged}"
+                                  VerticalAlignment="Center" Margin="20,0,0,0"
+                                  ToolTip="Off (default): hide groups dominated by AppData and build-cache files — typically 70-80% of raw matches and rarely safe to delete. On: show every group."/>
                         <TextBlock Text="{Binding Status}" VerticalAlignment="Center"
                                    Margin="20,0,0,0" FontFamily="Consolas"/>
                     </StackPanel>
@@ -228,6 +231,7 @@
                                           PreviewMouseWheel="InnerDataGrid_PreviewMouseWheel">
                                     <DataGrid.Columns>
                                         <DataGridTextColumn Header="File name" Binding="{Binding FileName}" Width="200" MinWidth="80" CanUserResize="True" IsReadOnly="True"/>
+                                        <DataGridTextColumn Header="Category" Binding="{Binding Category}" Width="110" MinWidth="80" CanUserResize="True" IsReadOnly="True"/>
                                         <DataGridTextColumn Header="Modified" Binding="{Binding LastWriteTime, StringFormat={}{0:yyyy-MM-dd HH:mm}}" Width="140" MinWidth="80" CanUserResize="True" IsReadOnly="True"/>
                                         <DataGridTemplateColumn Header="Open" Width="180" MinWidth="80" CanUserResize="True">
                                             <DataGridTemplateColumn.CellTemplate>
@@ -247,15 +251,19 @@
                             </DataTemplate>
                         </DataGrid.RowDetailsTemplate>
                         <DataGrid.Columns>
-                            <DataGridTextColumn Header="Group"   Binding="{Binding GroupId}" Width="60" MinWidth="40" CanUserResize="True"/>
-                            <DataGridTextColumn Header="Files"   Binding="{Binding Files.Count}" Width="60" MinWidth="40" CanUserResize="True"/>
-                            <DataGridTextColumn Header="Size"    Binding="{Binding SizeBytes,   Converter={StaticResource BytesToDisplay}}" Width="100" MinWidth="60" CanUserResize="True"/>
-                            <DataGridTextColumn Header="Wasted"  Binding="{Binding WastedBytes, Converter={StaticResource BytesToDisplay}}" Width="100" MinWidth="60" CanUserResize="True"/>
-                            <DataGridTextColumn Header="Hash"    Binding="{Binding Hash}"    Width="240" MinWidth="80" CanUserResize="True"/>
+                            <DataGridTextColumn Header="Group"    Binding="{Binding GroupId}" Width="60" MinWidth="40" CanUserResize="True"/>
+                            <DataGridTextColumn Header="Files"    Binding="{Binding Files.Count}" Width="60" MinWidth="40" CanUserResize="True"/>
+                            <DataGridTextColumn Header="Category" Binding="{Binding DominantCategory}" Width="110" MinWidth="80" CanUserResize="True"/>
+                            <DataGridTextColumn Header="Size"     Binding="{Binding SizeBytes,   Converter={StaticResource BytesToDisplay}}" Width="100" MinWidth="60" CanUserResize="True"/>
+                            <DataGridTextColumn Header="Wasted"   Binding="{Binding WastedBytes, Converter={StaticResource BytesToDisplay}}" Width="100" MinWidth="60" CanUserResize="True"/>
+                            <DataGridTextColumn Header="Hash"     Binding="{Binding Hash}"    Width="240" MinWidth="80" CanUserResize="True"/>
                             <DataGridTextColumn Header=" " Width="20" CanUserResize="False" CanUserSort="False" CanUserReorder="False"/>
                         </DataGrid.Columns>
                     </DataGrid>
                     <WrapPanel Grid.Row="4" Margin="0,10,0,0">
+                        <Button Content="Select all but smart keeper"           Command="{Binding SelectAllButSmartKeeperCommand}"   Width="240" Margin="0,4,8,4"
+                                Background="#FF2D6CDF" Foreground="White" FontWeight="SemiBold"
+                                ToolTip="Per group, keep the file most likely to be your real copy: prefers UserContent over Other over AppManaged over BuildOutput/Backup, with a tie-break toward shorter paths."/>
                         <Button Content="Select all but oldest in each group"   Command="{Binding SelectAllButOldestCommand}"       Width="260" Margin="0,4,8,4"/>
                         <Button Content="Select all but newest in each group"   Command="{Binding SelectAllButNewestCommand}"       Width="260" Margin="0,4,8,4"/>
                         <Button Content="Select all but shortest path"          Command="{Binding SelectAllButShortestPathCommand}" Width="220" Margin="0,4,8,4"/>

@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.IO;
 using System.IO.Enumeration;
 using System.Security.Cryptography;
@@ -8,34 +9,58 @@ namespace WinTune.Core.Services;
 
 public sealed class DedupService : IDedupService
 {
+    // First-pass partial-hash window. Files in the same size bucket whose first
+    // 64 KB don't match cannot be duplicates, so the full hash is skipped. Cuts
+    // pass-2 work substantially on real user data where same-size files differ
+    // early (installers, video formats with similar frame sizes, etc).
+    private const int HeadHashSize = 64 * 1024;
+
+    // Streaming read buffer for hashing. 1 MB amortises syscall overhead while
+    // keeping memory pressure modest. Reused via ArrayPool across files.
+    private const int HashBufferSize = 1 << 20;
+
     private static readonly IReadOnlySet<string> DefaultExcludeExtensions =
         new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             ".lnk", ".url", ".tmp", ".crdownload", ".partial"
         };
 
-    // Directory names where duplicate files are expected and necessary —
-    // managed by tools / OS / package managers. Skipping recursion into
-    // these prevents users from being asked to delete files that would
-    // break their projects, browsers, or Windows itself.
+    // Directory names where duplicates are expected and necessary — managed by
+    // tools / OS / package managers / build systems. Never user-recoverable.
+    // Skipping recursion into these prevents users from being asked to delete
+    // files that would break their projects, browsers, runtimes, or Windows.
+    //
+    // Note: this list filters *recursion into* a child directory by name, not
+    // the root itself. If a user explicitly scans a path inside AppData (or any
+    // excluded dir) by adding it as a root, the scan still proceeds.
     private static readonly IReadOnlySet<string> DefaultExcludeDirectoryNames =
         new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             // Source-control internals
             ".git", ".svn", ".hg",
-            // Package-manager content stores
-            "node_modules",
-            ".nuget", ".cargo", ".rustup", ".pnpm-store",
+            // Package-manager content stores (canonical roots)
+            "node_modules", "vendor", "Pods", "bower_components",
+            ".nuget", ".cargo", ".rustup", ".pnpm-store", ".yarn", ".npm",
+            ".gradle", ".m2", ".gem", ".dotnet", ".bun", ".volta",
+            ".nvm", ".pyenv", ".deno", ".cocoapods",
+            // Conda/Anaconda installations (every tree under these is package-managed)
+            "miniconda3", "anaconda3", "miniforge3", "mambaforge", ".conda",
             // Python venv / cache
-            "__pycache__", ".venv", "venv",
+            "__pycache__", ".venv", "venv", ".tox", ".pytest_cache",
             // Browser + system caches
-            "INetCache", "WebCache", "Code Cache", "GPUCache",
+            "INetCache", "WebCache", "Code Cache", "GPUCache", "Cache_Data",
             // Windows-managed installer / SxS / store content
             "WinSxS", "WindowsApps", "Installer", "Package Cache",
-            "DriverStore",
-            "$Recycle.Bin", "$RECYCLE.BIN",
+            "DriverStore", "$Recycle.Bin", "$RECYCLE.BIN",
             // Dev IDE internals
-            ".vs", ".idea"
+            ".vs", ".idea", ".vscode", ".vscode-insiders", ".vscode-server",
+            // Per-user app-data umbrella (opt-in: only blocks recursion INTO a
+            // subdir named AppData; explicit AppData root still scans).
+            "AppData", "Application Data", "Local Settings",
+            // Build output directories common to .NET, Java, Rust, JS, Go
+            "bin", "obj", "target", "dist", "build", "out",
+            // Framework / bundler caches inside repos
+            ".next", ".nuxt", ".parcel-cache", ".turbo", ".angular", ".cache"
         };
 
     public Task<IReadOnlyList<DuplicateGroup>> FindDuplicatesAsync(
@@ -47,135 +72,185 @@ public sealed class DedupService : IDedupService
         IProgress<DedupeProgress>? progress = null,
         CancellationToken ct = default) =>
         Task.Run<IReadOnlyList<DuplicateGroup>>(() =>
+            // Run the entire scan with very-low I/O + paging priority on this
+            // thread, so large hash reads do not evict the user's working set
+            // or starve their foreground app of disk.
+            Kernel32.RunWithBackgroundIoPriority(() =>
+                ScanCore(roots, minSizeBytes, includeHidden, excludeExtensions, excludeDirectoryNames, progress, ct)),
+            ct);
+
+    private static List<DuplicateGroup> ScanCore(
+        IReadOnlyCollection<string> roots,
+        long minSizeBytes,
+        bool includeHidden,
+        IReadOnlySet<string>? excludeExtensions,
+        IReadOnlySet<string>? excludeDirectoryNames,
+        IProgress<DedupeProgress>? progress,
+        CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        var excludes = excludeExtensions ?? DefaultExcludeExtensions;
+        var excludeDirs = excludeDirectoryNames ?? DefaultExcludeDirectoryNames;
+
+        // Pass 1: enumerate and group by exact byte size, capturing category up-front.
+        var bySize = new Dictionary<long, List<EnumeratedFile>>();
+        int scanned = 0;
+        foreach (var root in roots)
         {
             ct.ThrowIfCancellationRequested();
-            var excludes = excludeExtensions ?? DefaultExcludeExtensions;
-            var excludeDirs = excludeDirectoryNames ?? DefaultExcludeDirectoryNames;
+            if (string.IsNullOrEmpty(root) || !Directory.Exists(root)) continue;
 
-            // Pass 1: enumerate and group by exact byte size.
-            var bySize = new Dictionary<long, List<FileInfo>>();
-            int scanned = 0;
-            foreach (var root in roots)
+            var skipAttrs = FileAttributes.System | FileAttributes.ReparsePoint;
+            if (!includeHidden) skipAttrs |= FileAttributes.Hidden;
+
+            FileSystemEnumerable<FileInfo>? files;
+            try
+            {
+                var options = new EnumerationOptions
+                {
+                    RecurseSubdirectories = true,
+                    IgnoreInaccessible = true,
+                    AttributesToSkip = skipAttrs
+                };
+                files = new FileSystemEnumerable<FileInfo>(
+                    root,
+                    (ref FileSystemEntry entry) => (FileInfo)entry.ToFileSystemInfo(),
+                    options)
+                {
+                    ShouldIncludePredicate = (ref FileSystemEntry entry) => !entry.IsDirectory,
+                    ShouldRecursePredicate = (ref FileSystemEntry entry) =>
+                        !excludeDirs.Contains(entry.FileName.ToString())
+                };
+            }
+            catch
+            {
+                continue;
+            }
+
+            using var enumerator = files.GetEnumerator();
+            while (true)
             {
                 ct.ThrowIfCancellationRequested();
-                if (string.IsNullOrEmpty(root) || !Directory.Exists(root)) continue;
-
-                // AttributesToSkip applies to BOTH files and directories: setting
-                // ReparsePoint here means recursion does not follow junctions/symlinks.
-                // Hidden + System excludes %SystemRoot%\System Volume Information,
-                // $Recycle.Bin, and per-user registry hives at recursion time.
-                var skipAttrs = FileAttributes.System | FileAttributes.ReparsePoint;
-                if (!includeHidden) skipAttrs |= FileAttributes.Hidden;
-
-                FileSystemEnumerable<FileInfo>? files;
+                FileInfo fi;
                 try
                 {
-                    var options = new System.IO.EnumerationOptions
-                    {
-                        RecurseSubdirectories = true,
-                        IgnoreInaccessible = true,
-                        AttributesToSkip = skipAttrs
-                    };
-                    files = new FileSystemEnumerable<FileInfo>(
-                        root,
-                        (ref FileSystemEntry entry) => (FileInfo)entry.ToFileSystemInfo(),
-                        options)
-                    {
-                        ShouldIncludePredicate = (ref FileSystemEntry entry) => !entry.IsDirectory,
-                        ShouldRecursePredicate = (ref FileSystemEntry entry) =>
-                            !excludeDirs.Contains(entry.FileName.ToString())
-                    };
+                    if (!enumerator.MoveNext()) break;
+                    fi = enumerator.Current;
+                }
+                catch (OperationCanceledException) { throw; }
+                catch
+                {
+                    continue;
+                }
+
+                long length;
+                string extension;
+                DateTime lastWrite;
+                try
+                {
+                    if (IsSkippablePath(fi, includeHidden)) continue;
+                    length = fi.Length;
+                    extension = fi.Extension;
+                    lastWrite = fi.LastWriteTime;
                 }
                 catch
                 {
                     continue;
                 }
 
-                // Use an explicit enumerator so a sharing-violation IOException on one
-                // file (which IgnoreInaccessible does NOT skip — it only handles
-                // UnauthorizedAccessException) doesn't abort the whole scan.
-                using var enumerator = files.GetEnumerator();
-                while (true)
+                if (length < minSizeBytes) continue;
+                if (excludes.Contains(extension)) continue;
+
+                var category = Categorize(fi.FullName);
+                if (!bySize.TryGetValue(length, out var list))
                 {
-                    ct.ThrowIfCancellationRequested();
-                    FileInfo fi;
-                    try
-                    {
-                        if (!enumerator.MoveNext()) break;
-                        fi = enumerator.Current;
-                    }
-                    catch (OperationCanceledException) { throw; }
-                    catch
-                    {
-                        continue;
-                    }
-
-                    long length;
-                    string extension;
-                    try
-                    {
-                        if (IsSkippablePath(fi, includeHidden)) continue;
-                        length = fi.Length;
-                        extension = fi.Extension;
-                    }
-                    catch
-                    {
-                        continue;
-                    }
-
-                    if (length < minSizeBytes) continue;
-                    if (excludes.Contains(extension)) continue;
-
-                    if (!bySize.TryGetValue(length, out var list))
-                    {
-                        list = new List<FileInfo>();
-                        bySize[length] = list;
-                    }
-                    list.Add(fi);
-                    scanned++;
-                    if (scanned % 500 == 0)
-                    {
-                        progress?.Report(new DedupeProgress("Enumerate", scanned, 0, 0, 0));
-                    }
+                    list = new List<EnumeratedFile>();
+                    bySize[length] = list;
+                }
+                list.Add(new EnumeratedFile(fi.FullName, length, lastWrite, category));
+                scanned++;
+                if (scanned % 500 == 0)
+                {
+                    progress?.Report(new DedupeProgress("Enumerate", scanned, 0, 0, 0));
                 }
             }
+        }
 
-            // Pass 2: hash candidates (size buckets with >= 2 files).
-            var byHash = new Dictionary<string, List<HashedFile>>(StringComparer.Ordinal);
-            int candidateCount = bySize.Values.Where(v => v.Count >= 2).Sum(v => v.Count);
-            int hashed = 0;
+        // Pass 2a: head-hash the first HeadHashSize bytes of every file in any
+        // size-bucket of 2+. Files whose head doesn't match cannot be duplicates.
+        var headBuckets = new Dictionary<string, HashBucket>(StringComparer.Ordinal);
+        int hashed = 0;
+        progress?.Report(new DedupeProgress("HashStart", scanned, 0, 0, 0));
 
-            progress?.Report(new DedupeProgress("HashStart", scanned, 0, 0, 0));
-
+        var headBuf = ArrayPool<byte>.Shared.Rent(HashBufferSize);
+        try
+        {
+            using var headHasher = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
             foreach (var (size, list) in bySize)
             {
                 if (list.Count < 2) continue;
-                foreach (var fi in list)
+                long headBytes = Math.Min(size, HeadHashSize);
+                foreach (var f in list)
                 {
                     ct.ThrowIfCancellationRequested();
-                    string hex;
-                    try
-                    {
-                        using var stream = File.OpenRead(fi.FullName);
-                        // SHA-256 is used as a content fingerprint for dedup, not for security.
-                        // Originally SHA1 in the PowerShell version; switched here to satisfy
-                        // CA5350 and to make collision risk arbitrarily small.
-                        var hashBytes = SHA256.HashData(stream);
-                        hex = Convert.ToHexString(hashBytes);
-                    }
-                    catch
-                    {
-                        // Hash failure (locked file, race) — skip.
+                    if (!TryHash(f.FullPath, headBytes, headBuf, headHasher, out var headHex))
                         continue;
-                    }
 
-                    string key = $"{size}::{hex}";
-                    if (!byHash.TryGetValue(key, out var bucket))
+                    string key = $"{size}::{headHex}";
+                    if (!headBuckets.TryGetValue(key, out var bucket))
                     {
-                        bucket = new List<HashedFile>();
-                        byHash[key] = bucket;
+                        bucket = new HashBucket(size, headHex);
+                        headBuckets[key] = bucket;
                     }
-                    bucket.Add(new HashedFile(fi.FullName, fi.Length, fi.LastWriteTime, hex));
+                    bucket.Files.Add(f);
+                    hashed++;
+                    if (hashed % 50 == 0)
+                    {
+                        progress?.Report(new DedupeProgress("Hash", scanned, hashed, 0, 0));
+                    }
+                }
+            }
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(headBuf);
+        }
+
+        // Pass 2b: full-hash only buckets that survived head-hash matching AND
+        // are larger than the head window (smaller files are already fully hashed).
+        var byHash = new Dictionary<string, List<HashedFile>>(StringComparer.Ordinal);
+        var fullBuf = ArrayPool<byte>.Shared.Rent(HashBufferSize);
+        try
+        {
+            using var fullHasher = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+            foreach (var bucket in headBuckets.Values)
+            {
+                if (bucket.Files.Count < 2) continue;
+
+                if (bucket.Size <= HeadHashSize)
+                {
+                    // Head IS full. Promote directly without re-reading.
+                    string key = $"{bucket.Size}::{bucket.Hash}";
+                    var promoted = bucket.Files
+                        .Select(f => new HashedFile(f, bucket.Hash))
+                        .ToList();
+                    byHash[key] = promoted;
+                    continue;
+                }
+
+                foreach (var f in bucket.Files)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    if (!TryHash(f.FullPath, -1L, fullBuf, fullHasher, out var fullHex))
+                        continue;
+
+                    string key = $"{bucket.Size}::{fullHex}";
+                    if (!byHash.TryGetValue(key, out var fullBucket))
+                    {
+                        fullBucket = new List<HashedFile>();
+                        byHash[key] = fullBucket;
+                    }
+                    fullBucket.Add(new HashedFile(f, fullHex));
                     hashed++;
                     if (hashed % 25 == 0)
                     {
@@ -183,36 +258,41 @@ public sealed class DedupService : IDedupService
                     }
                 }
             }
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(fullBuf);
+        }
 
-            // Pass 3: build duplicate groups, sort by waste descending.
-            int groupId = 0;
-            var groups = new List<DuplicateGroup>();
-            long totalWasted = 0;
-            foreach (var (_, bucket) in byHash)
-            {
-                if (bucket.Count < 2) continue;
-                groupId++;
-                long groupSize = bucket[0].Size;
-                long wasted = groupSize * (bucket.Count - 1);
-                totalWasted += wasted;
-                var sortedFiles = bucket
-                    .OrderBy(f => f.Path, StringComparer.OrdinalIgnoreCase)
-                    .Select(f => new DuplicateFile(f.Path, f.Size, f.LastWriteTime))
-                    .ToList();
-                groups.Add(new DuplicateGroup(
-                    GroupId: groupId,
-                    Hash: bucket[0].Hash,
-                    SizeBytes: groupSize,
-                    WastedBytes: wasted,
-                    Files: sortedFiles));
-            }
-
-            progress?.Report(new DedupeProgress("Done", scanned, hashed, groups.Count, totalWasted));
-
-            return groups
-                .OrderByDescending(g => g.WastedBytes)
+        // Pass 3: build duplicate groups, sort by waste descending.
+        int groupId = 0;
+        var groups = new List<DuplicateGroup>();
+        long totalWasted = 0;
+        foreach (var bucket in byHash.Values)
+        {
+            if (bucket.Count < 2) continue;
+            groupId++;
+            long groupSize = bucket[0].File.SizeBytes;
+            long wasted = groupSize * (bucket.Count - 1);
+            totalWasted += wasted;
+            var sortedFiles = bucket
+                .OrderBy(f => f.File.FullPath, StringComparer.OrdinalIgnoreCase)
+                .Select(f => new DuplicateFile(f.File.FullPath, f.File.SizeBytes, f.File.LastWriteTime, f.File.Category))
                 .ToList();
-        }, ct);
+            groups.Add(new DuplicateGroup(
+                GroupId: groupId,
+                Hash: bucket[0].Hash,
+                SizeBytes: groupSize,
+                WastedBytes: wasted,
+                Files: sortedFiles));
+        }
+
+        progress?.Report(new DedupeProgress("Done", scanned, hashed, groups.Count, totalWasted));
+
+        return groups
+            .OrderByDescending(g => g.WastedBytes)
+            .ToList();
+    }
 
     public Task<RemovalResult> RemoveDuplicateFilesAsync(
         IReadOnlyCollection<string> paths,
@@ -292,9 +372,6 @@ public sealed class DedupService : IDedupService
                 hNameMappings = IntPtr.Zero,
                 lpszProgressTitle = null
             };
-            // Return value is informational; we determine per-file success by
-            // post-call File.Exists. A non-zero result simply means the call
-            // didn't complete cleanly — captured implicitly in the skipped list.
             _ = Shell32.SHFileOperationW(ref op);
 
             int recycled = 0;
@@ -341,5 +418,168 @@ public sealed class DedupService : IDedupService
         return false;
     }
 
-    private sealed record HashedFile(string Path, long Size, DateTime LastWriteTime, string Hash);
+    /// <summary>
+    /// Stream-hash a file, optionally only its first <paramref name="maxBytes"/>
+    /// bytes (-1 for full file). Returns false on I/O failure (locked file,
+    /// race) so the caller can skip without aborting the scan.
+    /// </summary>
+    private static bool TryHash(
+        string fullPath,
+        long maxBytes,
+        byte[] buffer,
+        IncrementalHash hasher,
+        out string hexHash)
+    {
+        try
+        {
+            // bufferSize: 1 disables FileStream's internal buffering — we manage
+            // our own 1 MB buffer above. SequentialScan signals NTFS to prefetch
+            // forward and to age cache pages out quickly so we don't pollute the
+            // page cache with multi-GB hash reads (a major cause of "still
+            // sluggish AFTER the scan").
+            using var stream = new FileStream(
+                fullPath,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.Read,
+                bufferSize: 1,
+                FileOptions.SequentialScan);
+
+            long remaining = maxBytes;
+            while (true)
+            {
+                int wantThisRead;
+                if (remaining < 0)
+                {
+                    wantThisRead = buffer.Length;
+                }
+                else
+                {
+                    if (remaining == 0) break;
+                    wantThisRead = remaining > buffer.Length ? buffer.Length : (int)remaining;
+                }
+
+                int read = stream.Read(buffer, 0, wantThisRead);
+                if (read == 0) break;
+                hasher.AppendData(buffer, 0, read);
+                if (remaining > 0)
+                {
+                    remaining -= read;
+                }
+            }
+
+            hexHash = Convert.ToHexString(hasher.GetHashAndReset());
+            return true;
+        }
+        catch
+        {
+            // Reset hasher state in case AppendData partially ran before the failure.
+            try { _ = hasher.GetHashAndReset(); } catch { /* hasher already clean */ }
+            hexHash = string.Empty;
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Classify a path into a coarse user-relevance bucket. Drives the UI's
+    /// default "show only user-actionable groups" filter and the smart-keeper
+    /// auto-selection.
+    /// </summary>
+    internal static FileCategory Categorize(string fullPath)
+    {
+        var fileName = Path.GetFileName(fullPath);
+        if (LooksLikeBackup(fileName)) return FileCategory.Backup;
+
+        var segments = fullPath.Split(PathSeparators, StringSplitOptions.RemoveEmptyEntries);
+        bool sawAppData = false;
+        bool sawUserContent = false;
+
+        foreach (var raw in segments)
+        {
+            var seg = raw.ToLowerInvariant();
+            if (BuildOutputSegments.Contains(seg)) return FileCategory.BuildOutput;
+            if (AppDataSegments.Contains(seg)) sawAppData = true;
+            if (IsUserContentSegment(seg)) sawUserContent = true;
+        }
+
+        if (sawUserContent) return FileCategory.UserContent;
+        if (sawAppData) return FileCategory.AppManaged;
+        return FileCategory.Other;
+    }
+
+    private static bool LooksLikeBackup(string fileName)
+    {
+        if (string.IsNullOrEmpty(fileName)) return false;
+        var lower = fileName.ToLowerInvariant();
+        if (lower.EndsWith(".bak", StringComparison.Ordinal)) return true;
+        if (lower.EndsWith(".old", StringComparison.Ordinal)) return true;
+        if (lower.StartsWith("copy of ", StringComparison.Ordinal)) return true;
+        if (lower.StartsWith("~$", StringComparison.Ordinal)) return true;
+        // " (N).ext" — Windows / browser default for "Save again" copies.
+        if (System.Text.RegularExpressions.Regex.IsMatch(lower, @" \(\d+\)\.[^.\s]+$")) return true;
+        return false;
+    }
+
+    private static bool IsUserContentSegment(string segLower)
+    {
+        if (UserContentExact.Contains(segLower)) return true;
+        // "OneDrive - Personal", "OneDrive - Anthropic", etc.
+        foreach (var prefix in UserContentPrefixes)
+        {
+            if (segLower.StartsWith(prefix + " ", StringComparison.Ordinal)) return true;
+        }
+        return false;
+    }
+
+    private static readonly char[] PathSeparators = ['\\', '/'];
+
+    private static readonly HashSet<string> UserContentExact = new(StringComparer.Ordinal)
+    {
+        "desktop", "documents", "downloads", "pictures", "videos", "music",
+        "onedrive", "dropbox", "box", "icloud drive", "icloud", "google drive"
+    };
+
+    private static readonly string[] UserContentPrefixes = new[]
+    {
+        "onedrive",
+        "google drive"
+    };
+
+    private static readonly HashSet<string> AppDataSegments = new(StringComparer.Ordinal)
+    {
+        "appdata", "application data", "local settings"
+    };
+
+    private static readonly HashSet<string> BuildOutputSegments = new(StringComparer.Ordinal)
+    {
+        // Build outputs across .NET / Java / Rust / JS / Go ecosystems
+        "bin", "obj", "target", "dist", "build", "out",
+        // VCS / IDE caches sometimes within repos
+        ".vs", ".idea", ".gradle",
+        // Framework / bundler caches
+        ".next", ".nuxt", ".parcel-cache", ".turbo", ".angular", ".cache",
+        // Package-manager subtrees that may slip through when the canonical root
+        // wasn't excluded (e.g. a vendor copy under a deeply nested project).
+        "node_modules", "vendor", "pods", "bower_components", "packages",
+        "site-packages", "pkgs"
+    };
+
+    /// <summary>Internal accumulator: file metadata captured during pass 1.</summary>
+    private sealed record EnumeratedFile(
+        string FullPath,
+        long SizeBytes,
+        DateTime LastWriteTime,
+        FileCategory Category);
+
+    /// <summary>Internal accumulator: head-hash bucket for pass 2a.</summary>
+    private sealed class HashBucket
+    {
+        public long Size { get; }
+        public string Hash { get; }
+        public List<EnumeratedFile> Files { get; } = new();
+        public HashBucket(long size, string hash) { Size = size; Hash = hash; }
+    }
+
+    /// <summary>Internal accumulator: full-hash bucket for pass 2b.</summary>
+    private sealed record HashedFile(EnumeratedFile File, string Hash);
 }

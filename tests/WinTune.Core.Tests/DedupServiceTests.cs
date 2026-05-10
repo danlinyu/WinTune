@@ -1,4 +1,5 @@
 using FluentAssertions;
+using WinTune.Core.Models;
 using WinTune.Core.Services;
 using WinTune.Core.Tests.TestHelpers;
 
@@ -138,6 +139,120 @@ public class DedupServiceTests
 
         groups.Should().HaveCount(1, "only the photos/ duplicates count; node_modules and .git are excluded by default");
         groups[0].Files.Should().HaveCount(2);
+        groups[0].Files.Should().OnlyContain(f => f.FullPath.Contains("photos"));
+    }
+
+    [Fact]
+    public async Task FindDuplicatesAsync_distinguishes_files_with_matching_head_but_different_tail()
+    {
+        // Two files with identical first 64 KB (the head-hash window) but different
+        // bytes after 64 KB MUST NOT be reported as duplicates. This locks in the
+        // correctness of the two-stage hash optimisation.
+        using var dir = new TempDirectory();
+        const int Head = 64 * 1024;
+        var common = new byte[Head];
+        for (int i = 0; i < common.Length; i++) common[i] = 0xA5;
+
+        var fileA = new byte[Head + 4096];
+        var fileB = new byte[Head + 4096];
+        Array.Copy(common, fileA, Head);
+        Array.Copy(common, fileB, Head);
+        for (int i = Head; i < fileA.Length; i++) { fileA[i] = 0x11; fileB[i] = 0x22; }
+
+        // And one true duplicate of fileA in another dir, to confirm hashes still detect actual matches.
+        dir.CreateFile("a/file.bin", fileA);
+        dir.CreateFile("b/different.bin", fileB);
+        dir.CreateFile("c/file.bin", fileA);
+
+        IDedupService sut = new DedupService();
+        var groups = await sut.FindDuplicatesAsync(new[] { dir.Path }, minSizeBytes: 1024);
+
+        groups.Should().HaveCount(1, "files differing only past the head-hash window must not group");
+        groups[0].Files.Should().HaveCount(2);
+        groups[0].Files.Select(f => Path.GetFileName(f.FullPath))
+            .Should().BeEquivalentTo(new[] { "file.bin", "file.bin" });
+    }
+
+    [Fact]
+    public async Task FindDuplicatesAsync_categorises_files_in_user_content_folders()
+    {
+        using var dir = new TempDirectory();
+        var content = new byte[2048];
+        for (int i = 0; i < content.Length; i++) content[i] = 0x99;
+        dir.CreateFile("Documents/My Project/photo.bin", content);
+        dir.CreateFile("Pictures/2025/photo.bin", content);
+
+        IDedupService sut = new DedupService();
+        var groups = await sut.FindDuplicatesAsync(new[] { dir.Path }, minSizeBytes: 1024);
+
+        groups.Should().HaveCount(1);
+        groups[0].Files.Should().OnlyContain(f => f.Category == FileCategory.UserContent);
+        groups[0].DominantCategory.Should().Be(FileCategory.UserContent);
+    }
+
+    [Fact]
+    public void Categorize_classifies_build_output_segments_as_BuildOutput()
+    {
+        DedupService.Categorize(@"C:\Users\u\repos\app\bin\Release\app.dll").Should().Be(FileCategory.BuildOutput);
+        DedupService.Categorize(@"C:\Users\u\repos\app\obj\Debug\app.dll").Should().Be(FileCategory.BuildOutput);
+        DedupService.Categorize(@"C:\Users\u\repos\rust\target\release\bin").Should().Be(FileCategory.BuildOutput);
+        DedupService.Categorize(@"C:\Users\u\.gradle\caches\transforms\x.jar").Should().Be(FileCategory.BuildOutput);
+        DedupService.Categorize(@"C:\Users\u\miniconda3\pkgs\libblas\Library\bin\libblas.dll").Should().Be(FileCategory.BuildOutput);
+    }
+
+    [Fact]
+    public void Categorize_classifies_user_content_paths_as_UserContent()
+    {
+        DedupService.Categorize(@"C:\Users\u\Documents\report.pdf").Should().Be(FileCategory.UserContent);
+        DedupService.Categorize(@"C:\Users\u\Pictures\trip\img.jpg").Should().Be(FileCategory.UserContent);
+        DedupService.Categorize(@"C:\Users\u\Downloads\installer.exe").Should().Be(FileCategory.UserContent);
+        DedupService.Categorize(@"C:\Users\u\OneDrive - Personal\Notes\note.md").Should().Be(FileCategory.UserContent);
+    }
+
+    [Fact]
+    public void Categorize_classifies_appdata_paths_as_AppManaged_when_no_other_signal()
+    {
+        DedupService.Categorize(@"C:\Users\u\AppData\Roaming\SomeApp\settings.bin").Should().Be(FileCategory.AppManaged);
+        DedupService.Categorize(@"C:\Users\u\AppData\Local\SomeApp\cache\file.bin").Should().Be(FileCategory.AppManaged);
+    }
+
+    [Fact]
+    public void Categorize_classifies_backup_filename_patterns_as_Backup()
+    {
+        DedupService.Categorize(@"C:\Users\u\Documents\notes.bak").Should().Be(FileCategory.Backup);
+        DedupService.Categorize(@"C:\Users\u\Documents\notes.docx.old").Should().Be(FileCategory.Backup);
+        DedupService.Categorize(@"C:\Users\u\Downloads\report (1).pdf").Should().Be(FileCategory.Backup);
+        DedupService.Categorize(@"C:\Users\u\Documents\Copy of plan.docx").Should().Be(FileCategory.Backup);
+    }
+
+    [Fact]
+    public void Categorize_falls_back_to_Other_for_unrecognised_paths()
+    {
+        DedupService.Categorize(@"C:\custom\store\thing.bin").Should().Be(FileCategory.Other);
+    }
+
+    [Fact]
+    public async Task FindDuplicatesAsync_excludes_gradle_and_miniconda_caches_by_default()
+    {
+        using var dir = new TempDirectory();
+        var content = new byte[2048];
+        for (int i = 0; i < content.Length; i++) content[i] = 0x66;
+
+        dir.CreateFile(".gradle/caches/8.13/transforms/x/library.jar", content);
+        dir.CreateFile(".gradle/caches/9.0/transforms/y/library.jar", content);
+        dir.CreateFile("miniconda3/pkgs/numpy/Library/bin/lib.dll", content);
+        dir.CreateFile("miniconda3/Library/bin/lib.dll", content);
+        dir.CreateFile("bin/Debug/app.dll", content);
+        dir.CreateFile("obj/Release/app.dll", content);
+
+        // Only this pair lives outside the new exclusion list — it should be the only group reported.
+        dir.CreateFile("photos/a/img.bin", content);
+        dir.CreateFile("photos/b/img.bin", content);
+
+        IDedupService sut = new DedupService();
+        var groups = await sut.FindDuplicatesAsync(new[] { dir.Path }, minSizeBytes: 1024);
+
+        groups.Should().HaveCount(1, "all .gradle, miniconda3, bin/, and obj/ duplicates are excluded by default");
         groups[0].Files.Should().OnlyContain(f => f.FullPath.Contains("photos"));
     }
 

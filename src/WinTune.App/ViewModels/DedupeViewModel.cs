@@ -15,6 +15,11 @@ public sealed partial class DedupeViewModel : ObservableObject, IDisposable
     private readonly IDedupService _dedup;
     private CancellationTokenSource? _cts;
 
+    // Full unfiltered scan result. The visible Groups collection is filtered
+    // from this based on ShowAppManaged. Keeping both lets the toggle flip
+    // instantly without a re-scan.
+    private readonly List<DuplicateGroup> _allGroups = new();
+
     public ObservableCollection<string> ScanPaths { get; } = new();
     public ObservableCollection<DuplicateGroup> Groups { get; } = new();
     public ObservableCollection<DuplicateFile> Selected { get; } = new();
@@ -35,6 +40,17 @@ public sealed partial class DedupeViewModel : ObservableObject, IDisposable
     [NotifyCanExecuteChangedFor(nameof(ScanCommand))]
     [NotifyCanExecuteChangedFor(nameof(CancelScanCommand))]
     private bool isRunning;
+
+    /// <summary>
+    /// When false (default), groups dominated by app-managed or build-output
+    /// files are hidden from the UI. ~80% of dupes in a real user folder fall
+    /// into those categories and are unsafe to delete; hiding them by default
+    /// lets the user focus on actually-recoverable space.
+    /// </summary>
+    [ObservableProperty]
+    private bool showAppManaged;
+
+    partial void OnShowAppManagedChanged(bool value) => ApplyGroupFilter();
 
     public DedupeViewModel(IDedupService dedup)
     {
@@ -80,6 +96,7 @@ public sealed partial class DedupeViewModel : ObservableObject, IDisposable
         var roots = selected.Count > 0 ? selected : ScanPaths.ToList();
         if (roots.Count == 0) return;
         IsRunning = true;
+        _allGroups.Clear();
         Groups.Clear();
         Selected.Clear();
         Status = "Scanning…";
@@ -102,7 +119,9 @@ public sealed partial class DedupeViewModel : ObservableObject, IDisposable
                 minSizeBytes: SelectedMinSize.Bytes,
                 progress: progress,
                 ct: _cts.Token);
-            foreach (var g in groups) Groups.Add(g);
+            _allGroups.AddRange(groups);
+            ApplyGroupFilter();
+            UpdateStatusAfterScan();
         }
         catch (OperationCanceledException)
         {
@@ -129,7 +148,7 @@ public sealed partial class DedupeViewModel : ObservableObject, IDisposable
         if (Selected.Count == 0) return;
 
         // Safety stop: refuse if we'd delete every file in any group.
-        foreach (var g in Groups)
+        foreach (var g in _allGroups)
         {
             int selectedFromGroup = g.Files.Count(f => Selected.Any(s => s.FullPath == f.FullPath));
             if (selectedFromGroup >= g.Files.Count)
@@ -144,14 +163,16 @@ public sealed partial class DedupeViewModel : ObservableObject, IDisposable
         var result = await _dedup.RemoveDuplicateFilesAsync(paths, permanent: false);
         Status = $"Deleted {result.Deleted} files ({result.BytesFreed:N0} bytes), {result.Errors.Count} errors";
 
-        // Remove deleted files from in-memory groups.
+        // Remove deleted files from the underlying full result so a toggle
+        // of ShowAppManaged later doesn't resurrect them.
         var deletedSet = new HashSet<string>(paths.Take(result.Deleted), StringComparer.OrdinalIgnoreCase);
-        var refreshed = Groups
+        var refreshed = _allGroups
             .Select(g => g with { Files = g.Files.Where(f => !deletedSet.Contains(f.FullPath)).ToList() })
             .Where(g => g.Files.Count >= 2)
             .ToList();
-        Groups.Clear();
-        foreach (var g in refreshed) Groups.Add(g);
+        _allGroups.Clear();
+        _allGroups.AddRange(refreshed);
+        ApplyGroupFilter();
         Selected.Clear();
     }
 
@@ -188,6 +209,23 @@ public sealed partial class DedupeViewModel : ObservableObject, IDisposable
         }
     }
 
+    /// <summary>
+    /// Pick the keeper most likely to be the user's "real" file based on
+    /// category and path heuristics, select the rest. Prefers UserContent
+    /// over Other over AppManaged over BuildOutput / Backup, with a mild tie
+    /// break toward shorter paths and non-cache locations.
+    /// </summary>
+    [RelayCommand]
+    private void SelectAllButSmartKeeper()
+    {
+        Selected.Clear();
+        foreach (var g in Groups)
+        {
+            var keep = g.Files.OrderByDescending(KeeperScore).First();
+            foreach (var f in g.Files) if (!ReferenceEquals(f, keep)) Selected.Add(f);
+        }
+    }
+
     [RelayCommand]
     private void ClearSelection() => Selected.Clear();
 
@@ -209,6 +247,58 @@ public sealed partial class DedupeViewModel : ObservableObject, IDisposable
         {
             Status = $"Could not open Explorer: {ex.Message}";
         }
+    }
+
+    private void ApplyGroupFilter()
+    {
+        Groups.Clear();
+        Selected.Clear();
+        foreach (var g in _allGroups)
+        {
+            if (!ShowAppManaged && IsHiddenByDefault(g.DominantCategory)) continue;
+            Groups.Add(g);
+        }
+        UpdateStatusAfterScan();
+    }
+
+    private static bool IsHiddenByDefault(FileCategory category) =>
+        category == FileCategory.AppManaged || category == FileCategory.BuildOutput;
+
+    private void UpdateStatusAfterScan()
+    {
+        if (_allGroups.Count == 0) return;
+        long visibleWaste = Groups.Sum(g => g.WastedBytes);
+        long totalWaste = _allGroups.Sum(g => g.WastedBytes);
+        int hidden = _allGroups.Count - Groups.Count;
+        if (hidden > 0)
+        {
+            Status = $"{Groups.Count} user-actionable groups, {visibleWaste:N0} bytes — "
+                   + $"{hidden} app-managed/build-output groups hidden ({totalWaste - visibleWaste:N0} bytes). "
+                   + "Toggle 'Show app-managed' to see them.";
+        }
+        else
+        {
+            Status = $"{Groups.Count} groups, {visibleWaste:N0} bytes wasted.";
+        }
+    }
+
+    private static int KeeperScore(DuplicateFile f)
+    {
+        int score = f.Category switch
+        {
+            FileCategory.UserContent => 200,
+            FileCategory.Other => 100,
+            FileCategory.AppManaged => 0,
+            FileCategory.Backup => -100,
+            FileCategory.BuildOutput => -200,
+            _ => 0
+        };
+        // Mild tie-breaker: shorter paths win; slight penalty for living under
+        // .cache trees that snuck through directory exclusion.
+        score -= f.FullPath.Length / 10;
+        if (f.FullPath.Contains(@"\.cache\", StringComparison.OrdinalIgnoreCase)) score -= 50;
+        if (f.FullPath.Contains(@"\Recycle.Bin\", StringComparison.OrdinalIgnoreCase)) score -= 200;
+        return score;
     }
 
     private bool CanScan() => !IsRunning;
