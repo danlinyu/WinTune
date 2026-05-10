@@ -196,19 +196,24 @@
                     </Grid>
                     <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,0,0,8">
                         <TextBlock Text="Min size:" VerticalAlignment="Center" Margin="0,0,8,0"/>
-                        <ComboBox Width="110" ItemsSource="{Binding MinSizeOptions}"
+                        <ComboBox Width="100" ItemsSource="{Binding MinSizeOptions}"
                                   SelectedItem="{Binding SelectedMinSize}"/>
+                        <TextBlock Text="Max size:" VerticalAlignment="Center" Margin="12,0,8,0"
+                                   ToolTip="Skip files larger than this. Use to keep scans quick when very large files (videos, ISOs, disk images) aren't worth waiting for."/>
+                        <ComboBox Width="100" ItemsSource="{Binding MaxSizeOptions}"
+                                  SelectedItem="{Binding SelectedMaxSize}"/>
                         <Button Content="Scan for Duplicates" Command="{Binding ScanCommand}"
                                 CommandParameter="{Binding ElementName=ScanPathsList, Path=SelectedItems}" Width="200"
                                 Background="#FF2D6CDF" Foreground="White" FontWeight="SemiBold"
-                                Margin="20,0,0,0"
+                                Margin="14,0,0,0"
                                 ToolTip="Scans selected paths if any are highlighted; otherwise scans all paths in the list."/>
                         <Button Content="Cancel" Command="{Binding CancelScanCommand}" Width="80" Margin="6,0,0,0"/>
                         <CheckBox Content="Show app-managed groups" IsChecked="{Binding ShowAppManaged}"
-                                  VerticalAlignment="Center" Margin="20,0,0,0"
+                                  VerticalAlignment="Center" Margin="14,0,0,0"
                                   ToolTip="Off (default): hide groups dominated by AppData and build-cache files — typically 70-80% of raw matches and rarely safe to delete. On: show every group."/>
                         <TextBlock Text="{Binding Status}" VerticalAlignment="Center"
-                                   Margin="20,0,0,0" FontFamily="Consolas"/>
+                                   Margin="14,0,0,0" FontFamily="Consolas"
+                                   TextWrapping="Wrap" TextTrimming="CharacterEllipsis"/>
                     </StackPanel>
                     <DataGrid x:Name="GroupsGrid" Grid.Row="3" ItemsSource="{Binding Groups}"
                               AutoGenerateColumns="False" IsReadOnly="True"
@@ -261,9 +266,11 @@
                         </DataGrid.Columns>
                     </DataGrid>
                     <WrapPanel Grid.Row="4" Margin="0,10,0,0">
-                        <Button Content="Select all but smart keeper"           Command="{Binding SelectAllButSmartKeeperCommand}"   Width="240" Margin="0,4,8,4"
+                        <Button Content="Select obvious dupes only (safe)"      Command="{Binding SelectOnlyObviousDupesCommand}"   Width="240" Margin="0,4,8,4"
                                 Background="#FF2D6CDF" Foreground="White" FontWeight="SemiBold"
-                                ToolTip="Per group, keep the file most likely to be your real copy: prefers UserContent over Other over AppManaged over BuildOutput/Backup, with a tie-break toward shorter paths."/>
+                                ToolTip="Recommended. Selects only when the keeper has a clear category advantage (e.g. a UserContent file beats a Backup or BuildOutput sibling). Groups where every file shares the same category are skipped — review those manually."/>
+                        <Button Content="Select all but best-guess keeper"      Command="{Binding SelectAllButSmartKeeperCommand}"   Width="240" Margin="0,4,8,4"
+                                ToolTip="Aggressive. Picks a keeper for every group using the same category scoring as 'obvious dupes', but falls back to path-length tie-breaks for ambiguous groups — that fallback can be arbitrary, so review the selection before deleting."/>
                         <Button Content="Select all but oldest in each group"   Command="{Binding SelectAllButOldestCommand}"       Width="260" Margin="0,4,8,4"/>
                         <Button Content="Select all but newest in each group"   Command="{Binding SelectAllButNewestCommand}"       Width="260" Margin="0,4,8,4"/>
                         <Button Content="Select all but shortest path"          Command="{Binding SelectAllButShortestPathCommand}" Width="220" Margin="0,4,8,4"/>

@@ -13,7 +13,9 @@ namespace WinTune.App.ViewModels;
 public sealed partial class DedupeViewModel : ObservableObject, IDisposable
 {
     private readonly IDedupService _dedup;
+    private readonly IDedupHashCache _cache;
     private CancellationTokenSource? _cts;
+    private bool _cacheLoaded;
 
     // Full unfiltered scan result. The visible Groups collection is filtered
     // from this based on ShowAppManaged. Keeping both lets the toggle flip
@@ -32,7 +34,17 @@ public sealed partial class DedupeViewModel : ObservableObject, IDisposable
         new MinSizeOption("100 MB", 100L * 1024 * 1024),
     };
 
+    public IReadOnlyList<MaxSizeOption> MaxSizeOptions { get; } = new[]
+    {
+        new MaxSizeOption("Unlimited", 0L),
+        new MaxSizeOption("100 MB",  100L * 1024 * 1024),
+        new MaxSizeOption("500 MB",  500L * 1024 * 1024),
+        new MaxSizeOption("1 GB",   1024L * 1024 * 1024),
+        new MaxSizeOption("5 GB", 5L * 1024 * 1024 * 1024),
+    };
+
     [ObservableProperty] private MinSizeOption selectedMinSize;
+    [ObservableProperty] private MaxSizeOption selectedMaxSize;
     [ObservableProperty] private string status = "";
     [ObservableProperty] private string? selectedScanPath;
 
@@ -52,10 +64,12 @@ public sealed partial class DedupeViewModel : ObservableObject, IDisposable
 
     partial void OnShowAppManagedChanged(bool value) => ApplyGroupFilter();
 
-    public DedupeViewModel(IDedupService dedup)
+    public DedupeViewModel(IDedupService dedup, IDedupHashCache cache)
     {
         _dedup = dedup;
+        _cache = cache;
         selectedMinSize = MinSizeOptions[1];
+        selectedMaxSize = MaxSizeOptions[0];
         ResetScanPaths();
     }
 
@@ -101,6 +115,17 @@ public sealed partial class DedupeViewModel : ObservableObject, IDisposable
         Selected.Clear();
         Status = "Scanning…";
         _cts = new CancellationTokenSource();
+
+        // Lazy-load the persistent hash cache on the first scan; subsequent
+        // scans reuse the in-memory state. Loading is best-effort: a corrupt
+        // file or missing directory simply means a cold first-scan.
+        if (!_cacheLoaded)
+        {
+            _cache.Load();
+            _cacheLoaded = true;
+        }
+        _cache.ResetStats();
+
         var progress = new Progress<DedupeProgress>(p =>
         {
             Status = p.Phase switch
@@ -117,6 +142,8 @@ public sealed partial class DedupeViewModel : ObservableObject, IDisposable
             var groups = await _dedup.FindDuplicatesAsync(
                 roots,
                 minSizeBytes: SelectedMinSize.Bytes,
+                maxSizeBytes: SelectedMaxSize.Bytes,
+                hashCache: _cache,
                 progress: progress,
                 ct: _cts.Token);
             _allGroups.AddRange(groups);
@@ -133,6 +160,9 @@ public sealed partial class DedupeViewModel : ObservableObject, IDisposable
         }
         finally
         {
+            // Persist whatever new entries the scan recorded, even on cancel —
+            // partial caching is still a win for the next scan.
+            _cache.Save();
             _cts?.Dispose();
             _cts = null;
             IsRunning = false;
@@ -176,6 +206,37 @@ public sealed partial class DedupeViewModel : ObservableObject, IDisposable
         Selected.Clear();
     }
 
+    /// <summary>
+    /// CONSERVATIVE auto-select: only marks files for deletion when the keeper
+    /// has a clear category-based advantage (gap of one full category step or
+    /// more). Groups where every file shares the same category — typical of
+    /// "is this OneDrive copy or my local copy the real one?" — are skipped
+    /// entirely so the user can review them manually. Recommended starting
+    /// point.
+    /// </summary>
+    [RelayCommand]
+    private void SelectOnlyObviousDupes()
+    {
+        Selected.Clear();
+        int skipped = 0;
+        foreach (var g in Groups)
+        {
+            var ranked = g.Files
+                .OrderByDescending(f => CategoryScore(f.Category))
+                .ThenByDescending(f => TieBreakerScore(f))
+                .ToList();
+            int gap = CategoryScore(ranked[0].Category) - CategoryScore(ranked[1].Category);
+            if (gap < 100)
+            {
+                skipped++;
+                continue;
+            }
+            foreach (var f in ranked.Skip(1)) Selected.Add(f);
+        }
+        Status = $"Selected {Selected.Count} files in {Groups.Count - skipped} groups with an obvious keeper. "
+               + $"Skipped {skipped} ambiguous groups — review those manually.";
+    }
+
     [RelayCommand]
     private void SelectAllButOldest()
     {
@@ -210,10 +271,11 @@ public sealed partial class DedupeViewModel : ObservableObject, IDisposable
     }
 
     /// <summary>
-    /// Pick the keeper most likely to be the user's "real" file based on
-    /// category and path heuristics, select the rest. Prefers UserContent
-    /// over Other over AppManaged over BuildOutput / Backup, with a mild tie
-    /// break toward shorter paths and non-cache locations.
+    /// AGGRESSIVE auto-select: pick a "best-guess" keeper per group based on
+    /// category + path heuristics and select everything else, even when no
+    /// file has a clear category advantage. Falls back to path-length tie-
+    /// breaks for same-category groups, which can be arbitrary — review the
+    /// selection before deleting.
     /// </summary>
     [RelayCommand]
     private void SelectAllButSmartKeeper()
@@ -270,36 +332,50 @@ public sealed partial class DedupeViewModel : ObservableObject, IDisposable
         long visibleWaste = Groups.Sum(g => g.WastedBytes);
         long totalWaste = _allGroups.Sum(g => g.WastedBytes);
         int hidden = _allGroups.Count - Groups.Count;
+
+        var cacheNote = "";
+        int hits = _cache.HitCount;
+        int misses = _cache.MissCount;
+        if (hits + misses > 0)
+        {
+            int pct = (int)Math.Round(100.0 * hits / Math.Max(1, hits + misses));
+            cacheNote = $" Cache: {hits} hit / {misses} miss ({pct}%).";
+        }
+
         if (hidden > 0)
         {
             Status = $"{Groups.Count} user-actionable groups, {visibleWaste:N0} bytes — "
                    + $"{hidden} app-managed/build-output groups hidden ({totalWaste - visibleWaste:N0} bytes). "
-                   + "Toggle 'Show app-managed' to see them.";
+                   + "Toggle 'Show app-managed' to see them." + cacheNote;
         }
         else
         {
-            Status = $"{Groups.Count} groups, {visibleWaste:N0} bytes wasted.";
+            Status = $"{Groups.Count} groups, {visibleWaste:N0} bytes wasted." + cacheNote;
         }
     }
 
-    private static int KeeperScore(DuplicateFile f)
+    private static int CategoryScore(FileCategory category) => category switch
     {
-        int score = f.Category switch
-        {
-            FileCategory.UserContent => 200,
-            FileCategory.Other => 100,
-            FileCategory.AppManaged => 0,
-            FileCategory.Backup => -100,
-            FileCategory.BuildOutput => -200,
-            _ => 0
-        };
-        // Mild tie-breaker: shorter paths win; slight penalty for living under
-        // .cache trees that snuck through directory exclusion.
-        score -= f.FullPath.Length / 10;
-        if (f.FullPath.Contains(@"\.cache\", StringComparison.OrdinalIgnoreCase)) score -= 50;
-        if (f.FullPath.Contains(@"\Recycle.Bin\", StringComparison.OrdinalIgnoreCase)) score -= 200;
-        return score;
+        FileCategory.UserContent => 200,
+        FileCategory.Other => 100,
+        FileCategory.AppManaged => 0,
+        FileCategory.Backup => -100,
+        FileCategory.BuildOutput => -200,
+        _ => 0
+    };
+
+    private static int TieBreakerScore(DuplicateFile f)
+    {
+        // Mild tie-breakers; intentionally bounded to <100 so they cannot
+        // flip a "clear category gap" decision in conservative mode.
+        int s = -Math.Min(99, f.FullPath.Length / 10);
+        if (f.FullPath.Contains(@"\.cache\", StringComparison.OrdinalIgnoreCase)) s -= 50;
+        if (f.FullPath.Contains(@"\Recycle.Bin\", StringComparison.OrdinalIgnoreCase)) s -= 200;
+        return s;
     }
+
+    private static int KeeperScore(DuplicateFile f) =>
+        CategoryScore(f.Category) + TieBreakerScore(f);
 
     private bool CanScan() => !IsRunning;
 
@@ -322,6 +398,11 @@ public sealed partial class DedupeViewModel : ObservableObject, IDisposable
 }
 
 public sealed record MinSizeOption(string Label, long Bytes)
+{
+    public override string ToString() => Label;
+}
+
+public sealed record MaxSizeOption(string Label, long Bytes)
 {
     public override string ToString() => Label;
 }

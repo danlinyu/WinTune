@@ -4,6 +4,7 @@ using System.Text.Json;
 using WinTune.Core.Models;
 using WinTune.Core.Services;
 
+
 // Investigation harness — runs DedupService against given roots, captures
 // timing + process I/O counters + per-group categorization, writes JSON report.
 
@@ -32,6 +33,14 @@ Console.WriteLine();
 using var cts = new CancellationTokenSource();
 Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); Console.WriteLine("\n[cancel requested]"); };
 
+// Harness-local cache file (not shared with the UI's cache). Lets the same
+// invocation cold-load then warm-load on a second run without polluting the
+// real WinTune cache at %LOCALAPPDATA%\WinTune\.
+var harnessCachePath = Path.Combine(Path.GetTempPath(), "wintune-dedup-harness-cache.json");
+var cache = new DedupHashCache(harnessCachePath);
+cache.Load();
+Console.WriteLine($"Cache: {cache.Count} entries loaded from {harnessCachePath}");
+
 var svc = new DedupService();
 var sw = Stopwatch.StartNew();
 long lastPrint = 0;
@@ -48,14 +57,16 @@ IReadOnlyList<DuplicateGroup> groups;
 try
 {
     groups = await svc.FindDuplicatesAsync(
-        roots, minSizeBytes: minSize, progress: progress, ct: cts.Token);
+        roots, minSizeBytes: minSize, hashCache: cache, progress: progress, ct: cts.Token);
 }
 catch (OperationCanceledException)
 {
     Console.WriteLine("Cancelled.");
+    cache.Save();
     return 1;
 }
 sw.Stop();
+cache.Save();
 
 GetProcessIoCounters(Process.GetCurrentProcess().Handle, out var io);
 var totalWasted = groups.Sum(g => g.WastedBytes);
@@ -66,6 +77,9 @@ Console.WriteLine($"Groups: {groups.Count}");
 Console.WriteLine($"Wasted: {totalWasted / 1024.0 / 1024 / 1024:N2} GB ({totalWasted:N0} bytes)");
 Console.WriteLine($"Process disk read: {io.ReadTransferCount / 1024.0 / 1024 / 1024:N2} GB ({io.ReadOperationCount:N0} ops)");
 Console.WriteLine($"Process disk write: {io.WriteTransferCount / 1024.0 / 1024 / 1024:N2} GB ({io.WriteOperationCount:N0} ops)");
+int hits = cache.HitCount, misses = cache.MissCount, lookups = hits + misses;
+double hitPct = lookups == 0 ? 0 : 100.0 * hits / lookups;
+Console.WriteLine($"Cache: {hits:N0} hit / {misses:N0} miss ({hitPct:N1}%) — {cache.Count:N0} entries persisted");
 
 // Categorize each group by where its files live.
 var byCategory = groups

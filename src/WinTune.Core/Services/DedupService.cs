@@ -66,9 +66,11 @@ public sealed class DedupService : IDedupService
     public Task<IReadOnlyList<DuplicateGroup>> FindDuplicatesAsync(
         IReadOnlyCollection<string> roots,
         long minSizeBytes = 1L * 1024 * 1024,
+        long maxSizeBytes = 0L,
         bool includeHidden = false,
         IReadOnlySet<string>? excludeExtensions = null,
         IReadOnlySet<string>? excludeDirectoryNames = null,
+        IDedupHashCache? hashCache = null,
         IProgress<DedupeProgress>? progress = null,
         CancellationToken ct = default) =>
         Task.Run<IReadOnlyList<DuplicateGroup>>(() =>
@@ -76,15 +78,17 @@ public sealed class DedupService : IDedupService
             // thread, so large hash reads do not evict the user's working set
             // or starve their foreground app of disk.
             Kernel32.RunWithBackgroundIoPriority(() =>
-                ScanCore(roots, minSizeBytes, includeHidden, excludeExtensions, excludeDirectoryNames, progress, ct)),
+                ScanCore(roots, minSizeBytes, maxSizeBytes, includeHidden, excludeExtensions, excludeDirectoryNames, hashCache, progress, ct)),
             ct);
 
     private static List<DuplicateGroup> ScanCore(
         IReadOnlyCollection<string> roots,
         long minSizeBytes,
+        long maxSizeBytes,
         bool includeHidden,
         IReadOnlySet<string>? excludeExtensions,
         IReadOnlySet<string>? excludeDirectoryNames,
+        IDedupHashCache? hashCache,
         IProgress<DedupeProgress>? progress,
         CancellationToken ct)
     {
@@ -159,6 +163,7 @@ public sealed class DedupService : IDedupService
                 }
 
                 if (length < minSizeBytes) continue;
+                if (maxSizeBytes > 0 && length > maxSizeBytes) continue;
                 if (excludes.Contains(extension)) continue;
 
                 var category = Categorize(fi.FullName);
@@ -193,8 +198,14 @@ public sealed class DedupService : IDedupService
                 foreach (var f in list)
                 {
                     ct.ThrowIfCancellationRequested();
-                    if (!TryHash(f.FullPath, headBytes, headBuf, headHasher, out var headHex))
-                        continue;
+                    string headHex;
+                    if (hashCache is null
+                        || !hashCache.TryGetHead(f.FullPath, f.SizeBytes, f.LastWriteTime, out headHex))
+                    {
+                        if (!TryHash(f.FullPath, headBytes, headBuf, headHasher, out headHex))
+                            continue;
+                        hashCache?.Update(f.FullPath, f.SizeBytes, f.LastWriteTime, headHash: headHex, fullHash: null);
+                    }
 
                     string key = $"{size}::{headHex}";
                     if (!headBuckets.TryGetValue(key, out var bucket))
@@ -241,8 +252,14 @@ public sealed class DedupService : IDedupService
                 foreach (var f in bucket.Files)
                 {
                     ct.ThrowIfCancellationRequested();
-                    if (!TryHash(f.FullPath, -1L, fullBuf, fullHasher, out var fullHex))
-                        continue;
+                    string fullHex;
+                    if (hashCache is null
+                        || !hashCache.TryGetFull(f.FullPath, f.SizeBytes, f.LastWriteTime, out fullHex))
+                    {
+                        if (!TryHash(f.FullPath, -1L, fullBuf, fullHasher, out fullHex))
+                            continue;
+                        hashCache?.Update(f.FullPath, f.SizeBytes, f.LastWriteTime, headHash: null, fullHash: fullHex);
+                    }
 
                     string key = $"{bucket.Size}::{fullHex}";
                     if (!byHash.TryGetValue(key, out var fullBucket))

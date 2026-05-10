@@ -40,6 +40,7 @@ public partial class App : Application
                 services.AddSingleton<IStartupService, StartupService>();
                 services.AddSingleton<IDiagnoseService, DiagnoseService>();
                 services.AddSingleton<IDedupService, DedupService>();
+                services.AddSingleton<IDedupHashCache, DedupHashCache>();
                 services.AddSingleton<DashboardViewModel>();
                 services.AddSingleton<CleanViewModel>();
                 services.AddSingleton<BoostViewModel>();

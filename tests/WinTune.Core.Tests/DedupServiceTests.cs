@@ -257,6 +257,123 @@ public class DedupServiceTests
     }
 
     [Fact]
+    public async Task FindDuplicatesAsync_respects_maxSizeBytes_skipping_oversized_files()
+    {
+        using var dir = new TempDirectory();
+        var smallContent = new byte[2048];
+        var largeContent = new byte[4096];
+        for (int i = 0; i < smallContent.Length; i++) smallContent[i] = 0x11;
+        for (int i = 0; i < largeContent.Length; i++) largeContent[i] = 0x22;
+
+        // Two of each — duplicates within their own size class.
+        dir.CreateFile("small/a.bin", smallContent);
+        dir.CreateFile("small/b.bin", smallContent);
+        dir.CreateFile("big/a.bin", largeContent);
+        dir.CreateFile("big/b.bin", largeContent);
+
+        IDedupService sut = new DedupService();
+
+        var groups = await sut.FindDuplicatesAsync(
+            new[] { dir.Path },
+            minSizeBytes: 1024,
+            maxSizeBytes: 3000); // excludes the 4096-byte pair
+
+        groups.Should().HaveCount(1, "files larger than maxSizeBytes are skipped");
+        groups[0].SizeBytes.Should().Be(2048);
+    }
+
+    [Fact]
+    public async Task FindDuplicatesAsync_uses_hash_cache_to_skip_re_reading_unchanged_files()
+    {
+        using var dir = new TempDirectory();
+        const int Size = 80 * 1024; // larger than head-hash window so pass 2b runs
+        var content = new byte[Size];
+        for (int i = 0; i < content.Length; i++) content[i] = 0x33;
+        dir.CreateFile("a/x.bin", content);
+        dir.CreateFile("b/x.bin", content);
+
+        var cachePath = Path.Combine(dir.Path, "cache.json");
+        var cache = new DedupHashCache(cachePath);
+
+        IDedupService sut = new DedupService();
+
+        // First scan — cold cache. Should populate.
+        var first = await sut.FindDuplicatesAsync(
+            new[] { dir.Path }, minSizeBytes: 1024, hashCache: cache);
+        first.Should().HaveCount(1);
+        cache.HitCount.Should().Be(0, "cold cache cannot have hits");
+        cache.MissCount.Should().BeGreaterThan(0);
+        cache.Count.Should().BeGreaterThan(0);
+
+        // Second scan — same files unchanged. Cache hits should replace I/O.
+        cache.ResetStats();
+        var second = await sut.FindDuplicatesAsync(
+            new[] { dir.Path }, minSizeBytes: 1024, hashCache: cache);
+        second.Should().HaveCount(1);
+        cache.HitCount.Should().BeGreaterThan(0, "warm cache should hit on unchanged files");
+    }
+
+    [Fact]
+    public void DedupHashCache_invalidates_entry_when_size_or_mtime_changes()
+    {
+        using var dir = new TempDirectory();
+        var path = dir.CreateFile("file.bin", new byte[100]);
+        var cache = new DedupHashCache(Path.Combine(dir.Path, "cache.json"));
+        var fi = new FileInfo(path);
+
+        cache.Update(path, fi.Length, fi.LastWriteTime, headHash: "HEAD", fullHash: "FULL");
+
+        cache.TryGetHead(path, fi.Length, fi.LastWriteTime, out var head).Should().BeTrue();
+        head.Should().Be("HEAD");
+        cache.TryGetFull(path, fi.Length, fi.LastWriteTime, out var full).Should().BeTrue();
+        full.Should().Be("FULL");
+
+        // Size mismatch
+        cache.TryGetHead(path, fi.Length + 1, fi.LastWriteTime, out _).Should().BeFalse();
+        // Mtime mismatch
+        cache.TryGetHead(path, fi.Length, fi.LastWriteTime.AddSeconds(1), out _).Should().BeFalse();
+    }
+
+    [Fact]
+    public void DedupHashCache_persists_and_reloads_entries_across_instances()
+    {
+        using var dir = new TempDirectory();
+        var cachePath = Path.Combine(dir.Path, "cache.json");
+        var first = new DedupHashCache(cachePath);
+
+        first.Update(@"C:\foo\bar.bin", 1024, new DateTime(2026, 1, 1, 12, 0, 0, DateTimeKind.Utc), "HEAD123", "FULL123");
+        first.Save();
+
+        var second = new DedupHashCache(cachePath);
+        second.Load();
+        second.Count.Should().Be(1);
+        second.TryGetHead(@"C:\foo\bar.bin", 1024, new DateTime(2026, 1, 1, 12, 0, 0, DateTimeKind.Utc), out var head)
+            .Should().BeTrue();
+        head.Should().Be("HEAD123");
+        second.TryGetFull(@"C:\foo\bar.bin", 1024, new DateTime(2026, 1, 1, 12, 0, 0, DateTimeKind.Utc), out var full)
+            .Should().BeTrue();
+        full.Should().Be("FULL123");
+    }
+
+    [Fact]
+    public void DedupHashCache_Update_merges_head_and_full_hashes_for_same_file()
+    {
+        using var dir = new TempDirectory();
+        var cache = new DedupHashCache(Path.Combine(dir.Path, "cache.json"));
+        var path = @"C:\foo\bar.bin";
+        var size = 1024L;
+        var mtime = new DateTime(2026, 1, 1, 12, 0, 0, DateTimeKind.Utc);
+
+        cache.Update(path, size, mtime, headHash: "HEAD", fullHash: null);
+        cache.Update(path, size, mtime, headHash: null, fullHash: "FULL");
+
+        cache.TryGetHead(path, size, mtime, out var head).Should().BeTrue();
+        head.Should().Be("HEAD");
+        cache.TryGetFull(path, size, mtime, out var full).Should().BeTrue();
+        full.Should().Be("FULL");
+    }
+
+    [Fact]
     public async Task FindDuplicatesAsync_skips_locked_files_without_throwing()
     {
         using var dir = new TempDirectory();
