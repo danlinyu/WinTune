@@ -12,6 +12,7 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <AssemblyName>WinTune</AssemblyName>
     <RootNamespace>WinTune.App</RootNamespace>
+    <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)'=='Release'">
