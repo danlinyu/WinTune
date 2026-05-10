@@ -5,7 +5,8 @@
         Title="WinTune — Windows Performance Toolkit"
         Height="640" Width="900"
         WindowStartupLocation="CenterScreen"
-        Background="#FFF7F7FA">
+        Background="#FFF7F7FA"
+        Icon="pack://application:,,,/WinTune.ico">
     <DockPanel>
         <Border DockPanel.Dock="Bottom" Background="#FF1F1F2E" Padding="10,6">
             <TextBlock Foreground="White" FontSize="12" Text="{Binding StatusBar}"/>

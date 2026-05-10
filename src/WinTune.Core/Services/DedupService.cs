@@ -1,4 +1,5 @@
 using System.IO;
+using System.IO.Enumeration;
 using System.Security.Cryptography;
 using WinTune.Core.Models;
 using WinTune.Core.NativeInterop;
@@ -13,17 +14,43 @@ public sealed class DedupService : IDedupService
             ".lnk", ".url", ".tmp", ".crdownload", ".partial"
         };
 
+    // Directory names where duplicate files are expected and necessary —
+    // managed by tools / OS / package managers. Skipping recursion into
+    // these prevents users from being asked to delete files that would
+    // break their projects, browsers, or Windows itself.
+    private static readonly IReadOnlySet<string> DefaultExcludeDirectoryNames =
+        new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            // Source-control internals
+            ".git", ".svn", ".hg",
+            // Package-manager content stores
+            "node_modules",
+            ".nuget", ".cargo", ".rustup", ".pnpm-store",
+            // Python venv / cache
+            "__pycache__", ".venv", "venv",
+            // Browser + system caches
+            "INetCache", "WebCache", "Code Cache", "GPUCache",
+            // Windows-managed installer / SxS / store content
+            "WinSxS", "WindowsApps", "Installer", "Package Cache",
+            "DriverStore",
+            "$Recycle.Bin", "$RECYCLE.BIN",
+            // Dev IDE internals
+            ".vs", ".idea"
+        };
+
     public Task<IReadOnlyList<DuplicateGroup>> FindDuplicatesAsync(
         IReadOnlyCollection<string> roots,
         long minSizeBytes = 1L * 1024 * 1024,
         bool includeHidden = false,
         IReadOnlySet<string>? excludeExtensions = null,
+        IReadOnlySet<string>? excludeDirectoryNames = null,
         IProgress<DedupeProgress>? progress = null,
         CancellationToken ct = default) =>
         Task.Run<IReadOnlyList<DuplicateGroup>>(() =>
         {
             ct.ThrowIfCancellationRequested();
             var excludes = excludeExtensions ?? DefaultExcludeExtensions;
+            var excludeDirs = excludeDirectoryNames ?? DefaultExcludeDirectoryNames;
 
             // Pass 1: enumerate and group by exact byte size.
             var bySize = new Dictionary<long, List<FileInfo>>();
@@ -40,15 +67,24 @@ public sealed class DedupService : IDedupService
                 var skipAttrs = FileAttributes.System | FileAttributes.ReparsePoint;
                 if (!includeHidden) skipAttrs |= FileAttributes.Hidden;
 
-                IEnumerable<FileInfo> files;
+                FileSystemEnumerable<FileInfo>? files;
                 try
                 {
-                    files = new DirectoryInfo(root).EnumerateFiles("*", new System.IO.EnumerationOptions
+                    var options = new System.IO.EnumerationOptions
                     {
                         RecurseSubdirectories = true,
                         IgnoreInaccessible = true,
                         AttributesToSkip = skipAttrs
-                    });
+                    };
+                    files = new FileSystemEnumerable<FileInfo>(
+                        root,
+                        (ref FileSystemEntry entry) => (FileInfo)entry.ToFileSystemInfo(),
+                        options)
+                    {
+                        ShouldIncludePredicate = (ref FileSystemEntry entry) => !entry.IsDirectory,
+                        ShouldRecursePredicate = (ref FileSystemEntry entry) =>
+                            !excludeDirs.Contains(entry.FileName.ToString())
+                    };
                 }
                 catch
                 {

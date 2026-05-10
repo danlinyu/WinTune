@@ -10,10 +10,15 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <AnalysisLevel>latest-recommended</AnalysisLevel>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>WinTune.ico</ApplicationIcon>
     <AssemblyName>WinTune</AssemblyName>
     <RootNamespace>WinTune.App</RootNamespace>
     <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
   </PropertyGroup>
+
+  <ItemGroup>
+    <Resource Include="WinTune.ico" />
+  </ItemGroup>
 
   <PropertyGroup Condition="'$(Configuration)'=='Release'">
     <PublishSingleFile>true</PublishSingleFile>

@@ -114,6 +114,34 @@ public class DedupServiceTests
     }
 
     [Fact]
+    public async Task FindDuplicatesAsync_does_not_descend_into_managed_directories_by_default()
+    {
+        using var dir = new TempDirectory();
+        var content = new byte[2048];
+        for (int i = 0; i < content.Length; i++) content[i] = 0x77;
+
+        // Two duplicates inside a managed directory (node_modules) — must NOT be reported.
+        dir.CreateFile("node_modules/lib-a/dup.bin", content);
+        dir.CreateFile("node_modules/lib-b/dup.bin", content);
+
+        // Two duplicates inside .git — must NOT be reported.
+        dir.CreateFile(".git/objects/pack/dup1.bin", content);
+        dir.CreateFile(".git/objects/pack/dup2.bin", content);
+
+        // Two duplicates in a regular subdirectory — SHOULD be reported.
+        dir.CreateFile("photos/vacation/img.bin", content);
+        dir.CreateFile("photos/backup/img.bin", content);
+
+        IDedupService sut = new DedupService();
+
+        var groups = await sut.FindDuplicatesAsync(new[] { dir.Path }, minSizeBytes: 1024);
+
+        groups.Should().HaveCount(1, "only the photos/ duplicates count; node_modules and .git are excluded by default");
+        groups[0].Files.Should().HaveCount(2);
+        groups[0].Files.Should().OnlyContain(f => f.FullPath.Contains("photos"));
+    }
+
+    [Fact]
     public async Task FindDuplicatesAsync_skips_locked_files_without_throwing()
     {
         using var dir = new TempDirectory();

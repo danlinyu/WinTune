@@ -9,6 +9,7 @@ public interface IDedupService
         long minSizeBytes = 1L * 1024 * 1024,
         bool includeHidden = false,
         IReadOnlySet<string>? excludeExtensions = null,
+        IReadOnlySet<string>? excludeDirectoryNames = null,
         IProgress<DedupeProgress>? progress = null,
         CancellationToken ct = default);
 
