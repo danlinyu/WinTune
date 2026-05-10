@@ -1,0 +1,319 @@
+<Window x:Class="WinTune.App.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="clr-namespace:WinTune.App.ViewModels"
+        Title="WinTune — Windows Performance Toolkit"
+        Height="640" Width="900"
+        WindowStartupLocation="CenterScreen"
+        Background="#FFF7F7FA">
+    <DockPanel>
+        <Border DockPanel.Dock="Bottom" Background="#FF1F1F2E" Padding="10,6">
+            <TextBlock Foreground="White" FontSize="12" Text="{Binding StatusBar}"/>
+        </Border>
+
+        <Border DockPanel.Dock="Top" Background="#FF2D6CDF" Padding="16,12">
+            <StackPanel>
+                <TextBlock Text="WinTune" Foreground="White" FontSize="22" FontWeight="Bold"/>
+                <TextBlock Text="Monitor · Clean · Boost — keep your laptop responsive"
+                           Foreground="#FFD7E5FF" FontSize="12"/>
+            </StackPanel>
+        </Border>
+
+        <TabControl Margin="10" Background="Transparent" BorderThickness="0">
+
+            <TabItem Header="  Dashboard  ">
+                <Grid Margin="14" DataContext="{Binding Dashboard}">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    <TextBlock Grid.Row="0" Text="Live system load" Style="{StaticResource HeaderText}"/>
+                    <Grid Grid.Row="1" Margin="0,0,0,16">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="120"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="200"/>
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition/>
+                            <RowDefinition/>
+                            <RowDefinition/>
+                        </Grid.RowDefinitions>
+                        <TextBlock Grid.Row="0" Grid.Column="0" Text="CPU"  VerticalAlignment="Center"/>
+                        <ProgressBar Grid.Row="0" Grid.Column="1" Value="{Binding CpuPct}" Maximum="100" Foreground="#FF2D6CDF"/>
+                        <TextBlock   Grid.Row="0" Grid.Column="2" Text="{Binding CpuPct, StringFormat={}{0}%}"
+                                     VerticalAlignment="Center" HorizontalAlignment="Right" FontFamily="Consolas"/>
+                        <TextBlock Grid.Row="1" Grid.Column="0" Text="RAM"  VerticalAlignment="Center"/>
+                        <ProgressBar Grid.Row="1" Grid.Column="1" Value="{Binding RamPct}" Maximum="100" Foreground="#FF59A14F"/>
+                        <TextBlock   Grid.Row="1" Grid.Column="2" Text="{Binding RamDisplay}"
+                                     VerticalAlignment="Center" HorizontalAlignment="Right" FontFamily="Consolas"/>
+                        <TextBlock Grid.Row="2" Grid.Column="0" Text="Disk C:" VerticalAlignment="Center"/>
+                        <ProgressBar Grid.Row="2" Grid.Column="1" Value="{Binding DiskPct}" Maximum="100" Foreground="#FFE15759"/>
+                        <TextBlock   Grid.Row="2" Grid.Column="2" Text="{Binding DiskDisplay}"
+                                     VerticalAlignment="Center" HorizontalAlignment="Right" FontFamily="Consolas"/>
+                    </Grid>
+                    <Grid Grid.Row="2">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+                        <TextBlock Grid.Row="0" Text="Top 10 processes by RAM" Style="{StaticResource HeaderText}"/>
+                        <DataGrid Grid.Row="1" ItemsSource="{Binding TopProcesses}"
+                                  AutoGenerateColumns="False" IsReadOnly="True"
+                                  HeadersVisibility="Column" GridLinesVisibility="Horizontal"
+                                  RowBackground="White" AlternatingRowBackground="#FFF2F2F7"
+                                  BorderBrush="#FFD0D0DC" BorderThickness="1">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="Name"      Binding="{Binding Name}" Width="*"/>
+                                <DataGridTextColumn Header="PID"       Binding="{Binding Id}"   Width="80"/>
+                                <DataGridTextColumn Header="RAM (MB)"  Binding="{Binding RamMB, StringFormat={}{0:N1}}" Width="100"/>
+                                <DataGridTextColumn Header="Threads"   Binding="{Binding Threads}" Width="80"/>
+                                <DataGridTextColumn Header="Started"   Binding="{Binding StartTime}" Width="100"/>
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </Grid>
+                </Grid>
+            </TabItem>
+
+            <TabItem Header="  Clean  ">
+                <Grid Margin="14" DataContext="{Binding Clean}">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    <TextBlock Grid.Row="0" Text="Choose what to clean" Style="{StaticResource HeaderText}"/>
+                    <UniformGrid Grid.Row="1" Columns="2" Margin="0,0,0,10">
+                        <CheckBox Content="User Temp folder"            IsChecked="{Binding CleanUserTemp}"            Margin="4"/>
+                        <CheckBox Content="System Temp folder"          IsChecked="{Binding CleanSystemTemp}"          Margin="4"/>
+                        <CheckBox Content="Windows Prefetch"            IsChecked="{Binding CleanPrefetch}"            Margin="4"/>
+                        <CheckBox Content="Windows Error Reports"       IsChecked="{Binding CleanWindowsErrorReports}" Margin="4"/>
+                        <CheckBox Content="Windows Update download cache" IsChecked="{Binding CleanWindowsUpdate}"     Margin="4"/>
+                        <CheckBox Content="Edge browser cache"          IsChecked="{Binding CleanEdgeCache}"           Margin="4"/>
+                        <CheckBox Content="Chrome browser cache"        IsChecked="{Binding CleanChromeCache}"         Margin="4"/>
+                        <CheckBox Content="Firefox browser cache"       IsChecked="{Binding CleanFirefoxCache}"        Margin="4"/>
+                        <CheckBox Content="Empty Recycle Bin"           IsChecked="{Binding CleanRecycleBin}"          Margin="4"/>
+                        <CheckBox Content="DNS resolver cache"          IsChecked="{Binding CleanDnsCache}"            Margin="4"/>
+                    </UniformGrid>
+                    <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,4,0,10">
+                        <Button Content="Run Cleanup" Command="{Binding RunCleanupCommand}"
+                                Background="#FF2D6CDF" Foreground="White" FontWeight="SemiBold" Width="160"/>
+                        <Button Content="Cancel"      Command="{Binding CancelCleanupCommand}" Width="80" Margin="6,4,0,4"/>
+                        <Button Content="Select all"  Command="{Binding SelectAllCleanTargetsCommand}" Margin="10,4,0,4"/>
+                        <Button Content="Clear all"   Command="{Binding ClearAllCleanTargetsCommand}" Margin="6,4,0,4"/>
+                        <Button Content="Open last log" Command="{Binding OpenLastCleanupLogCommand}"
+                                IsEnabled="{Binding HasLog}" Margin="6,4,0,4"/>
+                        <TextBlock Text="{Binding TotalLabel}" Margin="20,0,0,0"
+                                   VerticalAlignment="Center" FontWeight="SemiBold" Foreground="#FF59A14F"/>
+                    </StackPanel>
+                    <DataGrid Grid.Row="3" ItemsSource="{Binding Results}"
+                              AutoGenerateColumns="False" IsReadOnly="True"
+                              HeadersVisibility="Column" GridLinesVisibility="Horizontal"
+                              RowBackground="White" AlternatingRowBackground="#FFF2F2F7"
+                              BorderBrush="#FFD0D0DC" BorderThickness="1">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Target"        Binding="{Binding Target}" Width="160"/>
+                            <DataGridTextColumn Header="Files Removed" Binding="{Binding FilesRemoved}" Width="120"/>
+                            <DataGridTextColumn Header="Bytes Freed"   Binding="{Binding BytesFreed, Converter={StaticResource BytesToDisplay}}" Width="120"/>
+                            <DataGridCheckBoxColumn Header="Skipped"   Binding="{Binding Skipped}" Width="80"/>
+                            <DataGridTextColumn Header="Skip Reason"   Binding="{Binding SkipReason}" Width="200"/>
+                            <DataGridTextColumn Header="Errors"        Binding="{Binding Errors.Count}" Width="80"/>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </Grid>
+            </TabItem>
+
+            <TabItem Header="  Boost  ">
+                <Grid Margin="14" DataContext="{Binding Boost}">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    <TextBlock Grid.Row="0" Text="Quick performance actions" Style="{StaticResource HeaderText}"/>
+                    <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,4">
+                        <Button Content="Free RAM (Empty Working Sets)" Command="{Binding FreeRamCommand}"
+                                Width="240" Background="#FF59A14F" Foreground="White" FontWeight="SemiBold"/>
+                        <Button Content="Restart Explorer" Command="{Binding RestartExplorerCommand}"
+                                Width="160" Margin="10,4,0,4"/>
+                        <Button Content="Flush DNS Cache" Command="{Binding FlushDnsCommand}"
+                                Width="160" Margin="10,4,0,4"/>
+                    </StackPanel>
+                    <TextBlock Grid.Row="2" Text="{Binding ResultMessage}" Margin="0,8,0,12"
+                               FontFamily="Consolas" Foreground="#FF1F1F2E"/>
+                    <StackPanel Grid.Row="3" Orientation="Horizontal" Margin="0,4,0,8">
+                        <TextBlock Text="Startup programs (read-only — disable from Task Manager)"
+                                   Style="{StaticResource HeaderText}" Margin="0,0,16,0"/>
+                        <Button Content="Open Task Manager → Startup" Command="{Binding OpenStartupTaskManagerCommand}" Width="240"/>
+                    </StackPanel>
+                    <DataGrid Grid.Row="4" ItemsSource="{Binding StartupApps}"
+                              AutoGenerateColumns="False" IsReadOnly="True"
+                              HeadersVisibility="Column" GridLinesVisibility="Horizontal"
+                              RowBackground="White" AlternatingRowBackground="#FFF2F2F7"
+                              BorderBrush="#FFD0D0DC" BorderThickness="1">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Name"     Binding="{Binding Name}"     Width="200"/>
+                            <DataGridTextColumn Header="Command"  Binding="{Binding Command}"  Width="*"/>
+                            <DataGridTextColumn Header="Location" Binding="{Binding Location}" Width="200"/>
+                            <DataGridTextColumn Header="User"     Binding="{Binding User}"     Width="100"/>
+                            <DataGridTextColumn Header="Source"   Binding="{Binding Source}"   Width="100"/>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </Grid>
+            </TabItem>
+
+            <TabItem Header="  Dedupe  ">
+                <Grid Margin="14" DataContext="{Binding Dedupe}">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+                    <TextBlock Grid.Row="0" Text="Find and remove duplicate files"
+                               Style="{StaticResource HeaderText}"/>
+                    <Grid Grid.Row="1" Margin="0,0,0,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <ListBox x:Name="ScanPathsList" ItemsSource="{Binding ScanPaths}" SelectedItem="{Binding SelectedScanPath}"
+                                 Height="90" SelectionMode="Extended"
+                                 BorderBrush="#FFD0D0DC" BorderThickness="1"
+                                 ToolTip="Click to select one. Shift+click for a range. Ctrl+click for multi-pick. Scan respects selection if any."/>
+                        <StackPanel Grid.Column="1" Margin="8,0,0,0">
+                            <Button Content="Add path..." Command="{Binding AddScanPathCommand}"     Width="130"/>
+                            <Button Content="Remove"      Command="{Binding RemoveScanPathCommand}"
+                                    CommandParameter="{Binding ElementName=ScanPathsList, Path=SelectedItems}" Width="130"/>
+                            <Button Content="Defaults"    Command="{Binding ResetScanPathsCommand}"  Width="130"/>
+                        </StackPanel>
+                    </Grid>
+                    <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,0,0,8">
+                        <TextBlock Text="Min size:" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                        <ComboBox Width="110" ItemsSource="{Binding MinSizeOptions}"
+                                  SelectedItem="{Binding SelectedMinSize}"/>
+                        <Button Content="Scan for Duplicates" Command="{Binding ScanCommand}"
+                                CommandParameter="{Binding ElementName=ScanPathsList, Path=SelectedItems}" Width="200"
+                                Background="#FF2D6CDF" Foreground="White" FontWeight="SemiBold"
+                                Margin="20,0,0,0"
+                                ToolTip="Scans selected paths if any are highlighted; otherwise scans all paths in the list."/>
+                        <Button Content="Cancel" Command="{Binding CancelScanCommand}" Width="80" Margin="6,0,0,0"/>
+                        <TextBlock Text="{Binding Status}" VerticalAlignment="Center"
+                                   Margin="20,0,0,0" FontFamily="Consolas"/>
+                    </StackPanel>
+                    <DataGrid x:Name="GroupsGrid" Grid.Row="3" ItemsSource="{Binding Groups}"
+                              AutoGenerateColumns="False" IsReadOnly="True"
+                              HeadersVisibility="Column" GridLinesVisibility="Horizontal"
+                              RowBackground="White" AlternatingRowBackground="#FFF2F2F7"
+                              BorderBrush="#FFD0D0DC" BorderThickness="1"
+                              HorizontalScrollBarVisibility="Auto"
+                              VerticalScrollBarVisibility="Auto"
+                              ScrollViewer.CanContentScroll="False"
+                              EnableRowVirtualization="False"
+                              PreviewMouseWheel="DataGrid_PreviewMouseWheel">
+                        <DataGrid.RowDetailsTemplate>
+                            <DataTemplate>
+                                <DataGrid ItemsSource="{Binding Files}" AutoGenerateColumns="False"
+                                          HeadersVisibility="Column" Margin="20,0,0,0"
+                                          BorderBrush="#FFE0E0EA" BorderThickness="1"
+                                          HorizontalScrollBarVisibility="Auto"
+                                          ScrollViewer.CanContentScroll="False"
+                                          EnableRowVirtualization="False"
+                                          PreviewMouseWheel="InnerDataGrid_PreviewMouseWheel">
+                                    <DataGrid.Columns>
+                                        <DataGridTextColumn Header="File name" Binding="{Binding FileName}" Width="200" MinWidth="80" CanUserResize="True" IsReadOnly="True"/>
+                                        <DataGridTextColumn Header="Modified" Binding="{Binding LastWriteTime, StringFormat={}{0:yyyy-MM-dd HH:mm}}" Width="140" MinWidth="80" CanUserResize="True" IsReadOnly="True"/>
+                                        <DataGridTemplateColumn Header="Open" Width="180" MinWidth="80" CanUserResize="True">
+                                            <DataGridTemplateColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <Button Content="Reveal in Explorer"
+                                                            Command="{Binding DataContext.RevealInExplorerCommand, ElementName=GroupsGrid}"
+                                                            CommandParameter="{Binding}"
+                                                            Margin="2"
+                                                            ToolTip="Open File Explorer with this file selected"/>
+                                                </DataTemplate>
+                                            </DataGridTemplateColumn.CellTemplate>
+                                        </DataGridTemplateColumn>
+                                        <DataGridTextColumn Header="Path" Binding="{Binding FullPath}" Width="240" MinWidth="120" CanUserResize="True" IsReadOnly="True"/>
+                                        <DataGridTextColumn Header=" " Width="20" CanUserResize="False" CanUserSort="False" CanUserReorder="False" IsReadOnly="True"/>
+                                    </DataGrid.Columns>
+                                </DataGrid>
+                            </DataTemplate>
+                        </DataGrid.RowDetailsTemplate>
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Group"   Binding="{Binding GroupId}" Width="60" MinWidth="40" CanUserResize="True"/>
+                            <DataGridTextColumn Header="Files"   Binding="{Binding Files.Count}" Width="60" MinWidth="40" CanUserResize="True"/>
+                            <DataGridTextColumn Header="Size"    Binding="{Binding SizeBytes,   Converter={StaticResource BytesToDisplay}}" Width="100" MinWidth="60" CanUserResize="True"/>
+                            <DataGridTextColumn Header="Wasted"  Binding="{Binding WastedBytes, Converter={StaticResource BytesToDisplay}}" Width="100" MinWidth="60" CanUserResize="True"/>
+                            <DataGridTextColumn Header="Hash"    Binding="{Binding Hash}"    Width="240" MinWidth="80" CanUserResize="True"/>
+                            <DataGridTextColumn Header=" " Width="20" CanUserResize="False" CanUserSort="False" CanUserReorder="False"/>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                    <WrapPanel Grid.Row="4" Margin="0,10,0,0">
+                        <Button Content="Select all but oldest in each group"   Command="{Binding SelectAllButOldestCommand}"       Width="260" Margin="0,4,8,4"/>
+                        <Button Content="Select all but newest in each group"   Command="{Binding SelectAllButNewestCommand}"       Width="260" Margin="0,4,8,4"/>
+                        <Button Content="Select all but shortest path"          Command="{Binding SelectAllButShortestPathCommand}" Width="220" Margin="0,4,8,4"/>
+                        <Button Content="Clear selection"                       Command="{Binding ClearSelectionCommand}"           Width="140" Margin="0,4,8,4"/>
+                        <Button Content="Send Selected to Recycle Bin"          Command="{Binding DeleteSelectedCommand}"           Width="240"
+                                Background="#FFE15759" Foreground="White" FontWeight="SemiBold" Margin="0,4,8,4"/>
+                    </WrapPanel>
+                </Grid>
+            </TabItem>
+
+            <TabItem Header="  Diagnose  ">
+                <Grid Margin="14" DataContext="{Binding Diagnose}">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+                    <TextBlock Grid.Row="0" Text="Find what is making Explorer slow"
+                               Style="{StaticResource HeaderText}"/>
+                    <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,10">
+                        <Button Content="Run Diagnostics" Command="{Binding RunDiagnosticsCommand}" Width="180"
+                                Background="#FF2D6CDF" Foreground="White" FontWeight="SemiBold"/>
+                        <TextBlock Text="{Binding Summary}" Margin="20,0,0,0"
+                                   VerticalAlignment="Center" FontWeight="SemiBold"/>
+                    </StackPanel>
+                    <DataGrid Grid.Row="2" ItemsSource="{Binding Findings}"
+                              AutoGenerateColumns="False" IsReadOnly="True"
+                              HeadersVisibility="Column" GridLinesVisibility="Horizontal"
+                              RowBackground="White" AlternatingRowBackground="#FFF2F2F7"
+                              BorderBrush="#FFD0D0DC" BorderThickness="1">
+                        <DataGrid.Columns>
+                            <DataGridTemplateColumn Header="Severity" Width="80">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <Border Background="{Binding Severity, Converter={StaticResource SeverityToBrush}}"
+                                                CornerRadius="3" Padding="8,2" HorizontalAlignment="Left">
+                                            <TextBlock Text="{Binding Severity}" Foreground="White" FontWeight="SemiBold"/>
+                                        </Border>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTextColumn Header="Title"  Binding="{Binding Title}"  Width="220"/>
+                            <DataGridTextColumn Header="Detail" Binding="{Binding Detail}" Width="*"/>
+                            <DataGridTextColumn Header="Hint"   Binding="{Binding Hint}"   Width="280"/>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                    <TextBlock Grid.Row="3" Text="Safe one-click fixes"
+                               Style="{StaticResource HeaderText}" Margin="0,16,0,4"/>
+                    <WrapPanel Grid.Row="4" Orientation="Horizontal">
+                        <Button Content="Reset Quick Access"        Command="{Binding ResetQuickAccessCommand}"        Width="200" Margin="0,4,8,4"/>
+                        <Button Content="Disable Telemetry"         Command="{Binding DisableTelemetryCommand}"        Width="200" Margin="0,4,8,4"/>
+                        <Button Content="Apply Classic Right-Click" Command="{Binding EnableClassicRightClickCommand}" Width="220" Margin="0,4,8,4"/>
+                        <Button Content="Rebuild Search Index"      Command="{Binding RebuildSearchIndexCommand}"      Width="200" Margin="0,4,8,4"/>
+                        <Button Content="Undo Classic Right-Click"  Command="{Binding DisableClassicRightClickCommand}" Width="220" Margin="0,4,8,4"/>
+                    </WrapPanel>
+                </Grid>
+            </TabItem>
+        </TabControl>
+    </DockPanel>
+</Window>

@@ -2,6 +2,9 @@
 logs/
 *.log
 
+# Test runner output
+tests/results.xml
+
 # Local toolchain (gh portable, etc.)
 .tools/
 
@@ -13,3 +16,19 @@ Thumbs.db
 desktop.ini
 ehthumbs.db
 $RECYCLE.BIN/
+
+# .NET build output
+bin/
+obj/
+*.user
+.vs/
+publish/
+artifacts/
+TestResults/
+*.coverage
+*.nupkg
+
+# C# port diagnostic artifacts
+diag.log
+diag.ready
+WinTune.diag.ps1

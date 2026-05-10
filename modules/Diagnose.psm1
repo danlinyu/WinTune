@@ -88,7 +88,7 @@ function Invoke-Diagnostics {
     }
 
     # --- Windows Search index
-    $idxBase = 'C:\ProgramData\Microsoft\Search\Data\Applications\Windows\Projects\SystemIndex\Indexer\CiFiles'
+    $idxBase = Join-Path $env:ProgramData 'Microsoft\Search\Data\Applications\Windows\Projects\SystemIndex\Indexer\CiFiles'
     if (Test-Path $idxBase) {
         $idxBytes = (Get-ChildItem $idxBase -Recurse -ErrorAction SilentlyContinue |
             Measure-Object -Property Length -Sum).Sum
@@ -166,7 +166,11 @@ function Invoke-Diagnostics {
             'Use Boost tab -> "Free RAM (Empty Working Sets)".') )
     }
 
-    return ,$findings.ToArray()
+    # Emit each finding as its own pipeline item. The earlier `return ,$findings.ToArray()`
+    # form prevented unrolling, so `@(Invoke-Diagnostics)` wrapped the whole
+    # array as a single element and WPF ItemsSource showed one row whose
+    # auto-generated columns were Length/Rank/SyncRoot of an Object[].
+    return $findings.ToArray()
 }
 
 # =====================================================================
@@ -213,15 +217,29 @@ function Disable-Telemetry {
     try {
         if ($svc.Status -eq 'Running') { Stop-Service DiagTrack -Force -ErrorAction Stop }
         Set-Service DiagTrack -StartupType Disabled -ErrorAction Stop
-        # Also Connected User Experiences -- the silent half
-        $cuat = Get-Service dmwappushservice -ErrorAction SilentlyContinue
-        if ($cuat) {
+
+        # Set the Group Policy registry value too. Without this, Windows Update
+        # cumulative updates routinely re-enable DiagTrack -- the policy key is
+        # what makes the disable stick across updates. AllowTelemetry=0 = Security.
+        $polRoot = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection'
+        if (-not (Test-Path $polRoot)) { New-Item -Path $polRoot -Force | Out-Null }
+        Set-ItemProperty -Path $polRoot -Name 'AllowTelemetry' -Type DWord -Value 0 -ErrorAction Stop
+
+        # Also stop dmwappushservice (WAP Push Message Routing Service) where it
+        # still exists. Removed from Win11 24H2; harmless to attempt on systems
+        # without it.
+        $wap = Get-Service dmwappushservice -ErrorAction SilentlyContinue
+        if ($wap) {
             try {
-                if ($cuat.Status -eq 'Running') { Stop-Service dmwappushservice -Force -ErrorAction SilentlyContinue }
+                if ($wap.Status -eq 'Running') { Stop-Service dmwappushservice -Force -ErrorAction SilentlyContinue }
                 Set-Service dmwappushservice -StartupType Disabled -ErrorAction SilentlyContinue
             } catch {}
         }
-        [pscustomobject]@{ Success = $true; Note = 'DiagTrack stopped + disabled. Reversible: Set-Service DiagTrack -StartupType Automatic; Start-Service DiagTrack' }
+
+        [pscustomobject]@{
+            Success = $true
+            Note    = 'DiagTrack stopped + disabled, AllowTelemetry policy = 0. Reversible: Remove-ItemProperty -Path HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection -Name AllowTelemetry; Set-Service DiagTrack -StartupType Automatic; Start-Service DiagTrack'
+        }
     } catch {
         [pscustomobject]@{ Success = $false; Note = $_.Exception.Message }
     }

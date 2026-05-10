@@ -22,6 +22,7 @@ Import-Module (Join-Path $ScriptRoot 'modules\Boost.psm1')    -Force
 Import-Module (Join-Path $ScriptRoot 'modules\Startup.psm1')  -Force
 Import-Module (Join-Path $ScriptRoot 'modules\Diagnose.psm1') -Force
 Import-Module (Join-Path $ScriptRoot 'modules\Dedup.psm1')    -Force
+Import-Module (Join-Path $ScriptRoot 'modules\Async.psm1')    -Force
 #endregion
 
 #region Load XAML
@@ -83,6 +84,198 @@ function Get-SelectedTargets {
     }
     return @($picked)
 }
+
+# --- Background-op poll handlers ----------------------------------------------
+# Each Update-*Poll runs at script scope so it can see Set-Status, Format-Bytes,
+# Receive-AsyncProgress, etc. Add_Tick wires up a trivial delegate that just
+# calls these. Inline scriptblocks created INSIDE click handlers do not bind
+# to the script's session state when invoked by the WPF dispatcher, so
+# function lookups fail silently from there. Same pattern as the dashboard
+# timer (which has always worked), now applied to the four async pollers.
+
+function Update-CleanupPoll {
+    try {
+        if (-not $script:CleanupOp) { return }
+        foreach ($info in (Receive-AsyncProgress $script:CleanupOp)) {
+            if ($info.Phase -eq 'Start') {
+                Set-Status "[$($info.Index)/$($info.Total)] Cleaning $($info.Target)..."
+            }
+        }
+
+        if (Test-AsyncOpComplete $script:CleanupOp) {
+            $script:CleanupPoller.Stop()
+            $r = Receive-AsyncOp $script:CleanupOp
+            $script:CleanupOp = $null
+            $ui.CleanRunBtn.IsEnabled    = $true
+            $ui.CleanCancelBtn.IsEnabled = $false
+
+            if (-not $r.Success) {
+                Set-Status "Cleanup error: $($r.Error)"
+                return
+            }
+
+            $results = @($r.Result)
+            $totalBytes = ($results | Measure-Object -Property BytesFreed -Sum).Sum
+            $display = $results | ForEach-Object {
+                $note = if ($_.Skipped) {
+                    $_.SkipReason
+                } elseif ($_.Errors.Count) {
+                    $sample = ($_.Errors | Select-Object -First 1) -as [string]
+                    if ($sample.Length -gt 90) { $sample = $sample.Substring(0,87) + '...' }
+                    "$($_.Errors.Count) error(s): $sample"
+                } else { '' }
+                [pscustomobject]@{
+                    Target = $_.Target
+                    Status = if ($_.Skipped) { 'Skipped' } elseif ($_.Errors.Count -gt 0) { 'Partial' } else { 'OK' }
+                    Items  = $_.FilesRemoved
+                    Freed  = (Format-Bytes -Bytes $_.BytesFreed)
+                    Note   = $note
+                }
+            }
+            $ui.CleanResultsGrid.ItemsSource = @($display)
+            $ui.CleanTotalLbl.Text = "Freed: $(Format-Bytes -Bytes $totalBytes)"
+            $logPath = Get-LastCleanupLog
+            if ($logPath) {
+                $ui.CleanOpenLogBtn.IsEnabled = $true
+                $ui.CleanOpenLogBtn.Tag = $logPath
+            }
+            Set-Status "Cleanup done. Freed $(Format-Bytes -Bytes $totalBytes). Log: $logPath"
+        }
+    } catch {
+        $msg = "Cleanup poller error: $($_.Exception.Message)"
+        Write-Host $msg -ForegroundColor Red
+        try { Set-Status $msg } catch {}
+        try { $script:CleanupPoller.Stop() } catch {}
+        $script:CleanupOp = $null
+        try {
+            $ui.CleanRunBtn.IsEnabled    = $true
+            $ui.CleanCancelBtn.IsEnabled = $false
+        } catch {}
+    }
+}
+
+function Update-DedupePoll {
+    try {
+        if (-not $script:DedupeOp) { return }
+        foreach ($info in (Receive-AsyncProgress $script:DedupeOp)) {
+            $msg = switch ($info.Phase) {
+                'Scan'      { "Phase 1/2: scanned $($info.FilesSeen) files..." }
+                'HashStart' { "Phase 2/2: hashing $($info.Candidates) size-collision candidates..." }
+                'Hash'      { "Hashed $($info.Hashed) / $($info.Total)..." }
+                'Done'      { "Done. $($info.Groups) duplicate group(s) found." }
+                default     { '' }
+            }
+            if ($msg) { $ui.DedupeStatusLbl.Text = $msg }
+        }
+
+        if (Test-AsyncOpComplete $script:DedupeOp) {
+            $script:DedupePoller.Stop()
+            $r = Receive-AsyncOp $script:DedupeOp
+            $script:DedupeOp = $null
+            $ui.DedupeScanBtn.IsEnabled   = $true
+            $ui.DedupeCancelBtn.IsEnabled = $false
+
+            if (-not $r.Success) {
+                $ui.DedupeStatusLbl.Text = "Scan error: $($r.Error)"
+                Set-Status "Dedupe scan error: $($r.Error)"
+                return
+            }
+
+            $groups = @($r.Result)
+            $script:DedupeGroups = $groups
+
+            $rows = foreach ($g in $groups) {
+                foreach ($f in $g.Files) {
+                    [pscustomobject]@{
+                        Group     = $g.GroupId
+                        Size      = (Format-Bytes -Bytes $g.SizeBytes)
+                        Path      = $f.FullName
+                        Modified  = $f.LastWriteTime.ToString('yyyy-MM-dd HH:mm')
+                        SizeBytes = [long]$g.SizeBytes
+                    }
+                }
+            }
+            $ui.DedupeGrid.ItemsSource = @($rows)
+
+            $totalWasted = ($groups | Measure-Object -Property WastedBytes -Sum).Sum
+            if (-not $totalWasted) { $totalWasted = 0 }
+            $msg = "Found $($groups.Count) group(s), $((@($rows)).Count) duplicate file(s). Reclaimable: $(Format-Bytes -Bytes $totalWasted)."
+            $ui.DedupeStatusLbl.Text = $msg
+            Set-Status $msg
+        }
+    } catch {
+        $msg = "Dedupe poller error: $($_.Exception.Message)"
+        Write-Host $msg -ForegroundColor Red
+        try { Set-Status $msg } catch {}
+        try { $script:DedupePoller.Stop() } catch {}
+        $script:DedupeOp = $null
+        try {
+            $ui.DedupeScanBtn.IsEnabled   = $true
+            $ui.DedupeCancelBtn.IsEnabled = $false
+        } catch {}
+    }
+}
+
+function Update-DiagPoll {
+    try {
+        if (-not $script:DiagOp) { return }
+        if (Test-AsyncOpComplete $script:DiagOp) {
+            $script:DiagPoller.Stop()
+            $r = Receive-AsyncOp $script:DiagOp
+            $script:DiagOp = $null
+            $ui.DiagRunBtn.IsEnabled = $true
+
+            if (-not $r.Success) {
+                Set-Status "Diagnostics error: $($r.Error)"
+                return
+            }
+
+            $f = @($r.Result)
+            $ui.DiagFindingsGrid.ItemsSource = $f
+            $red    = ($f | Where-Object Severity -eq 'Red'    | Measure-Object).Count
+            $yellow = ($f | Where-Object Severity -eq 'Yellow' | Measure-Object).Count
+            $green  = ($f | Where-Object Severity -eq 'Green'  | Measure-Object).Count
+            $ui.DiagSummaryLbl.Text = "Findings: $red red, $yellow yellow, $green green"
+            $ui.DiagSummaryLbl.Foreground = if ($red -gt 0) { 'Red' } elseif ($yellow -gt 0) { '#FFB58900' } else { '#FF59A14F' }
+            Set-Status "Diagnostics done. $red red, $yellow yellow, $green green."
+        }
+    } catch {
+        $msg = "Diagnostics poller error: $($_.Exception.Message)"
+        Write-Host $msg -ForegroundColor Red
+        try { Set-Status $msg } catch {}
+        try { $script:DiagPoller.Stop() } catch {}
+        $script:DiagOp = $null
+        try { $ui.DiagRunBtn.IsEnabled = $true } catch {}
+    }
+}
+
+function Update-BoostPoll {
+    try {
+        if (-not $script:BoostOp) { return }
+        if (Test-AsyncOpComplete $script:BoostOp) {
+            $script:BoostPoller.Stop()
+            $r = Receive-AsyncOp $script:BoostOp
+            $script:BoostOp = $null
+            $ui.BoostFreeRamBtn.IsEnabled = $true
+
+            if (-not $r.Success) {
+                Set-Status "Free RAM error: $($r.Error)"
+                return
+            }
+            $msg = "Trimmed $($r.Result.ProcessesTrimmed) process(es) (skipped $($r.Result.ProcessesSkipped)). Freed approx $(Format-Bytes -Bytes $r.Result.BytesFreed)."
+            $ui.BoostResultLbl.Text = $msg
+            Set-Status $msg
+        }
+    } catch {
+        $msg = "Boost poller error: $($_.Exception.Message)"
+        Write-Host $msg -ForegroundColor Red
+        try { Set-Status $msg } catch {}
+        try { $script:BoostPoller.Stop() } catch {}
+        $script:BoostOp = $null
+        try { $ui.BoostFreeRamBtn.IsEnabled = $true } catch {}
+    }
+}
+
 #endregion
 
 #region Wire events
@@ -91,6 +284,27 @@ function Get-SelectedTargets {
 $timer = New-Object System.Windows.Threading.DispatcherTimer
 $timer.Interval = [TimeSpan]::FromSeconds(2)
 $timer.Add_Tick({ try { Update-Dashboard } catch { Set-Status "Dashboard refresh failed: $($_.Exception.Message)" } })
+
+# --- Async-op pollers ---
+# Created once at script top level so the Add_Tick scriptblocks bind to the
+# script's session state. Scriptblocks created at runtime inside click
+# handlers do not -- WPF dispatches them in a context where script-scope
+# function lookup fails. Click handlers re-Start() these pre-wired timers.
+$script:CleanupPoller = New-Object System.Windows.Threading.DispatcherTimer
+$script:CleanupPoller.Interval = [TimeSpan]::FromMilliseconds(150)
+$script:CleanupPoller.Add_Tick({ Update-CleanupPoll })
+
+$script:DedupePoller = New-Object System.Windows.Threading.DispatcherTimer
+$script:DedupePoller.Interval = [TimeSpan]::FromMilliseconds(150)
+$script:DedupePoller.Add_Tick({ Update-DedupePoll })
+
+$script:DiagPoller = New-Object System.Windows.Threading.DispatcherTimer
+$script:DiagPoller.Interval = [TimeSpan]::FromMilliseconds(150)
+$script:DiagPoller.Add_Tick({ Update-DiagPoll })
+
+$script:BoostPoller = New-Object System.Windows.Threading.DispatcherTimer
+$script:BoostPoller.Interval = [TimeSpan]::FromMilliseconds(150)
+$script:BoostPoller.Add_Tick({ Update-BoostPoll })
 
 # --- Cleanup tab ---
 $ui.CleanSelectAllBtn.Add_Click({
@@ -105,45 +319,39 @@ $ui.CleanSelectNoneBtn.Add_Click({
 })
 
 $ui.CleanRunBtn.Add_Click({
+    if ($script:CleanupOp) { Set-Status "Cleanup already running."; return }
+
     $targets = Get-SelectedTargets
     if (-not $targets -or $targets.Count -eq 0) {
         Set-Status "No cleanup targets selected."
         return
     }
-    $ui.CleanRunBtn.IsEnabled = $false
+
+    $ui.CleanRunBtn.IsEnabled    = $false
+    $ui.CleanCancelBtn.IsEnabled = $true
     Set-Status "Cleaning $($targets.Count) target(s)..."
-    try {
-        $results = Invoke-Cleanup -Targets $targets
-        $totalBytes = ($results | Measure-Object -Property BytesFreed -Sum).Sum
-        $display = $results | ForEach-Object {
-            $note = if ($_.Skipped) {
-                $_.SkipReason
-            } elseif ($_.Errors.Count) {
-                $sample = ($_.Errors | Select-Object -First 1) -as [string]
-                if ($sample.Length -gt 90) { $sample = $sample.Substring(0,87) + '...' }
-                "$($_.Errors.Count) error(s): $sample"
-            } else { '' }
-            [pscustomobject]@{
-                Target     = $_.Target
-                Status     = if ($_.Skipped) { 'Skipped' } elseif ($_.Errors.Count -gt 0) { 'Partial' } else { 'OK' }
-                Items      = $_.FilesRemoved
-                Freed      = (Format-Bytes -Bytes $_.BytesFreed)
-                Note       = $note
-            }
-        }
-        $ui.CleanResultsGrid.ItemsSource = @($display)
-        $ui.CleanTotalLbl.Text = "Freed: $(Format-Bytes -Bytes $totalBytes)"
-        $logPath = Get-LastCleanupLog
-        if ($logPath) {
-            $ui.CleanOpenLogBtn.IsEnabled = $true
-            $ui.CleanOpenLogBtn.Tag = $logPath
-        }
-        Set-Status "Cleanup done. Freed $(Format-Bytes -Bytes $totalBytes). Log: $logPath"
-    } catch {
-        Set-Status "Cleanup error: $($_.Exception.Message)"
-    } finally {
-        $ui.CleanRunBtn.IsEnabled = $true
+
+    $script:CleanupOp = Start-AsyncOp -Script {
+        param($targets, $modPath, $Progress)
+        Import-Module $modPath -Force
+        Invoke-Cleanup -Targets $targets -OnProgress $Progress
+    } -Arguments @{
+        targets = $targets
+        modPath = (Join-Path $ScriptRoot 'modules\Cleanup.psm1')
     }
+
+    $script:CleanupPoller.Start()
+})
+
+$ui.CleanCancelBtn.Add_Click({
+    if ($script:CleanupOp) {
+        Stop-AsyncOp $script:CleanupOp
+        $script:CleanupOp = $null
+    }
+    try { $script:CleanupPoller.Stop() } catch {}
+    $ui.CleanRunBtn.IsEnabled    = $true
+    $ui.CleanCancelBtn.IsEnabled = $false
+    Set-Status "Cleanup cancelled (in-flight target may still complete)."
 })
 
 $ui.CleanOpenLogBtn.Add_Click({
@@ -157,18 +365,20 @@ $ui.CleanOpenLogBtn.Add_Click({
 
 # --- Boost tab ---
 $ui.BoostFreeRamBtn.Add_Click({
-    Set-Status "Trimming working sets..."
+    if ($script:BoostOp) { Set-Status "RAM trim already running."; return }
+
     $ui.BoostFreeRamBtn.IsEnabled = $false
-    try {
-        $r = Clear-WorkingSets
-        $msg = "Trimmed $($r.ProcessesTrimmed) process(es) (skipped $($r.ProcessesSkipped)). Freed approx $(Format-Bytes -Bytes $r.BytesFreed)."
-        $ui.BoostResultLbl.Text = $msg
-        Set-Status $msg
-    } catch {
-        Set-Status "Free RAM error: $($_.Exception.Message)"
-    } finally {
-        $ui.BoostFreeRamBtn.IsEnabled = $true
+    Set-Status "Trimming working sets..."
+
+    $script:BoostOp = Start-AsyncOp -Script {
+        param($modPath, $Progress)
+        Import-Module $modPath -Force
+        Clear-WorkingSets
+    } -Arguments @{
+        modPath = (Join-Path $ScriptRoot 'modules\Boost.psm1')
     }
+
+    $script:BoostPoller.Start()
 })
 
 $ui.BoostRestartExplorerBtn.Add_Click({
@@ -194,17 +404,23 @@ $ui.BoostOpenTaskMgrBtn.Add_Click({ Open-StartupTaskManager; Set-Status "Task Ma
 
 # --- Diagnose tab ---
 function Run-Diagnose {
+    # Async + fire-and-forget. CIM queries inside Invoke-Diagnostics typically
+    # take 1-2 seconds; previously this blocked the dispatcher (visible as a
+    # frozen window on startup since Add_Loaded calls this synchronously).
+    if ($script:DiagOp) { return }   # already in-flight
+
+    $ui.DiagRunBtn.IsEnabled = $false
     Set-Status "Running diagnostics..."
-    try {
-        $f = @(Invoke-Diagnostics)
-        $ui.DiagFindingsGrid.ItemsSource = $f
-        $red    = ($f | Where-Object Severity -eq 'Red'    | Measure-Object).Count
-        $yellow = ($f | Where-Object Severity -eq 'Yellow' | Measure-Object).Count
-        $green  = ($f | Where-Object Severity -eq 'Green'  | Measure-Object).Count
-        $ui.DiagSummaryLbl.Text = "Findings: $red red, $yellow yellow, $green green"
-        $ui.DiagSummaryLbl.Foreground = if ($red -gt 0) { 'Red' } elseif ($yellow -gt 0) { '#FFB58900' } else { '#FF59A14F' }
-        Set-Status "Diagnostics done. $red red, $yellow yellow, $green green."
-    } catch { Set-Status "Diagnostics error: $($_.Exception.Message)" }
+
+    $script:DiagOp = Start-AsyncOp -Script {
+        param($modPath, $Progress)
+        Import-Module $modPath -Force
+        Invoke-Diagnostics
+    } -Arguments @{
+        modPath = (Join-Path $ScriptRoot 'modules\Diagnose.psm1')
+    }
+
+    $script:DiagPoller.Start()
 }
 
 $ui.DiagRunBtn.Add_Click({ Run-Diagnose })
@@ -256,14 +472,6 @@ $ui.FixRebuildIndexBtn.Add_Click({
 # without re-scanning.
 $script:DedupeGroups = @()
 
-function Format-Bytes-Local {
-    param([long]$B)
-    if ($B -ge 1GB) { return "{0:N2} GB" -f ($B / 1GB) }
-    if ($B -ge 1MB) { return "{0:N2} MB" -f ($B / 1MB) }
-    if ($B -ge 1KB) { return "{0:N2} KB" -f ($B / 1KB) }
-    return "$B B"
-}
-
 function Reset-DedupePaths {
     $ui.DedupePathsList.Items.Clear()
     foreach ($p in (Get-DefaultScanRoots)) { [void]$ui.DedupePathsList.Items.Add($p) }
@@ -288,63 +496,43 @@ $ui.DedupeRemovePathBtn.Add_Click({
 })
 
 $ui.DedupeScanBtn.Add_Click({
+    if ($script:DedupeOp) { Set-Status "Dedupe scan already running."; return }
+
     $paths = @($ui.DedupePathsList.Items)
     if (-not $paths -or $paths.Count -eq 0) {
         Set-Status "No paths to scan. Click 'Defaults' or 'Add path...' first."
         return
     }
-    $minSizeRaw = $ui.DedupeMinSizeCombo.SelectedItem.Tag
-    $minSize    = [long]$minSizeRaw
+    $minSize = [long]$ui.DedupeMinSizeCombo.SelectedItem.Tag
 
-    $ui.DedupeScanBtn.IsEnabled = $false
-    $ui.DedupeStatusLbl.Text    = "Scanning..."
+    $ui.DedupeScanBtn.IsEnabled   = $false
+    $ui.DedupeCancelBtn.IsEnabled = $true
+    $ui.DedupeStatusLbl.Text      = "Scanning..."
     Set-Status "Dedupe scan starting on $($paths.Count) path(s)..."
 
-    # Force the UI to repaint before the synchronous scan blocks the dispatcher.
-    $window.Dispatcher.Invoke([Action]{}, [System.Windows.Threading.DispatcherPriority]::Render)
-
-    try {
-        $progressCb = {
-            param($info)
-            try {
-                $msg = switch ($info.Phase) {
-                    'Scan'      { "Phase 1/2: scanned $($info.FilesSeen) files..." }
-                    'HashStart' { "Phase 2/2: hashing $($info.Candidates) size-collision candidates..." }
-                    'Hash'      { "Hashed $($info.Hashed) / $($info.Total)..." }
-                    'Done'      { "Done. $($info.Groups) duplicate group(s) found." }
-                    default     { '' }
-                }
-                $ui.DedupeStatusLbl.Text = $msg
-                $window.Dispatcher.Invoke([Action]{}, [System.Windows.Threading.DispatcherPriority]::Background)
-            } catch {}
-        }
-        $groups = @(Find-Duplicates -Paths $paths -MinSizeBytes $minSize -OnProgress $progressCb)
-        $script:DedupeGroups = $groups
-
-        # Flatten for grid display.
-        $rows = foreach ($g in $groups) {
-            foreach ($f in $g.Files) {
-                [pscustomobject]@{
-                    Group     = $g.GroupId
-                    Size      = (Format-Bytes-Local $g.SizeBytes)
-                    Path      = $f.FullName
-                    Modified  = $f.LastWriteTime.ToString('yyyy-MM-dd HH:mm')
-                    SizeBytes = [long]$g.SizeBytes
-                }
-            }
-        }
-        $ui.DedupeGrid.ItemsSource = @($rows)
-
-        $totalWasted = ($groups | Measure-Object -Property WastedBytes -Sum).Sum
-        if (-not $totalWasted) { $totalWasted = 0 }
-        $msg = "Found $($groups.Count) group(s), $((@($rows)).Count) duplicate file(s). Reclaimable: $(Format-Bytes-Local $totalWasted)."
-        $ui.DedupeStatusLbl.Text = $msg
-        Set-Status $msg
-    } catch {
-        Set-Status "Dedupe scan error: $($_.Exception.Message)"
-    } finally {
-        $ui.DedupeScanBtn.IsEnabled = $true
+    $script:DedupeOp = Start-AsyncOp -Script {
+        param($paths, $minSize, $modPath, $Progress)
+        Import-Module $modPath -Force
+        Find-Duplicates -Paths $paths -MinSizeBytes $minSize -OnProgress $Progress
+    } -Arguments @{
+        paths   = $paths
+        minSize = $minSize
+        modPath = (Join-Path $ScriptRoot 'modules\Dedup.psm1')
     }
+
+    $script:DedupePoller.Start()
+})
+
+$ui.DedupeCancelBtn.Add_Click({
+    if ($script:DedupeOp) {
+        Stop-AsyncOp $script:DedupeOp
+        $script:DedupeOp = $null
+    }
+    try { $script:DedupePoller.Stop() } catch {}
+    $ui.DedupeScanBtn.IsEnabled   = $true
+    $ui.DedupeCancelBtn.IsEnabled = $false
+    $ui.DedupeStatusLbl.Text      = "Cancelled."
+    Set-Status "Dedupe scan cancelled."
 })
 
 function Set-DedupeSelection {
@@ -367,7 +555,7 @@ function Set-DedupeSelection {
     $n = $ui.DedupeGrid.SelectedItems.Count
     $totalSelectedBytes = 0L
     foreach ($r in $ui.DedupeGrid.SelectedItems) { $totalSelectedBytes += [long]$r.SizeBytes }
-    Set-Status "Selected $n file(s) for deletion ($(Format-Bytes-Local $totalSelectedBytes))."
+    Set-Status "Selected $n file(s) for deletion ($(Format-Bytes -Bytes $totalSelectedBytes))."
 }
 
 $ui.DedupeAutoOldestBtn.Add_Click({
@@ -403,7 +591,7 @@ $ui.DedupeDeleteBtn.Add_Click({
 
     $totalBytes = ($sel | Measure-Object -Property SizeBytes -Sum).Sum
     $confirm = [System.Windows.MessageBox]::Show(
-        "Send $($sel.Count) file(s) ($(Format-Bytes-Local $totalBytes)) to the Recycle Bin?",
+        "Send $($sel.Count) file(s) ($(Format-Bytes -Bytes $totalBytes)) to the Recycle Bin?",
         "WinTune Dedupe -- confirm", 'OKCancel', 'Question')
     if ($confirm -ne 'OK') { return }
 
@@ -411,7 +599,7 @@ $ui.DedupeDeleteBtn.Add_Click({
     Set-Status "Sending $($paths.Count) file(s) to Recycle Bin..."
     try {
         $r = Remove-DuplicateFiles -Paths $paths
-        $msg = "Deleted $($r.Deleted) file(s), freed $(Format-Bytes-Local $r.BytesFreed)."
+        $msg = "Deleted $($r.Deleted) file(s), freed $(Format-Bytes -Bytes $r.BytesFreed)."
         if ($r.Errors.Count) { $msg += " Errors: $($r.Errors.Count)." }
         $ui.DedupeStatusLbl.Text = $msg
         Set-Status $msg
@@ -438,7 +626,22 @@ $window.Add_Loaded({
     }
 })
 
-$window.Add_Closed({ try { $timer.Stop() } catch {} })
+$window.Add_Closed({
+    # Stop dashboard refresh.
+    try { $timer.Stop() } catch {}
+
+    # Cancel any in-flight background ops and stop their pollers, otherwise the
+    # process can linger after the window closes (especially during a long
+    # dedup scan).
+    foreach ($n in 'CleanupOp','DedupeOp','DiagOp','BoostOp') {
+        $op = Get-Variable -Name $n -Scope Script -ValueOnly -ErrorAction SilentlyContinue
+        if ($op) { try { Stop-AsyncOp $op } catch {} }
+    }
+    foreach ($n in 'CleanupPoller','DedupePoller','DiagPoller','BoostPoller') {
+        $p = Get-Variable -Name $n -Scope Script -ValueOnly -ErrorAction SilentlyContinue
+        if ($p) { try { $p.Stop() } catch {} }
+    }
+})
 #endregion
 
 # Show the window. Suppress null output when WPF returns Nullable<bool>.
