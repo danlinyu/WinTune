@@ -48,7 +48,7 @@ $xaml.SelectNodes("//*[@*[local-name()='Name']]") | ForEach-Object {
 #endregion
 
 #region Helpers
-function Set-Status {
+function Global:Set-Status {
     param([string]$Message)
     $stamp = (Get-Date).ToString('HH:mm:ss')
     $ui.StatusBarText.Text = "[$stamp] $Message"
@@ -93,7 +93,7 @@ function Get-SelectedTargets {
 # function lookups fail silently from there. Same pattern as the dashboard
 # timer (which has always worked), now applied to the four async pollers.
 
-function Update-CleanupPoll {
+function Global:Update-CleanupPoll {
     try {
         if (-not $script:CleanupOp) { return }
         foreach ($info in (Receive-AsyncProgress $script:CleanupOp)) {
@@ -154,7 +154,7 @@ function Update-CleanupPoll {
     }
 }
 
-function Update-DedupePoll {
+function Global:Update-DedupePoll {
     try {
         if (-not $script:DedupeOp) { return }
         foreach ($info in (Receive-AsyncProgress $script:DedupeOp)) {
@@ -216,7 +216,7 @@ function Update-DedupePoll {
     }
 }
 
-function Update-DiagPoll {
+function Global:Update-DiagPoll {
     try {
         if (-not $script:DiagOp) { return }
         if (Test-AsyncOpComplete $script:DiagOp) {
@@ -249,7 +249,7 @@ function Update-DiagPoll {
     }
 }
 
-function Update-BoostPoll {
+function Global:Update-BoostPoll {
     try {
         if (-not $script:BoostOp) { return }
         if (Test-AsyncOpComplete $script:BoostOp) {
