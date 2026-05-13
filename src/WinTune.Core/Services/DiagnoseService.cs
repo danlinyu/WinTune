@@ -12,23 +12,35 @@ public sealed class DiagnoseService : IDiagnoseService
 {
     private const string ClassicRightClickClsid = "{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}";
 
-    public Task<IReadOnlyList<Finding>> InvokeDiagnosticsAsync(CancellationToken ct = default) =>
-        Task.Run<IReadOnlyList<Finding>>(() =>
+    private readonly IPowerService _power;
+
+    public DiagnoseService(IPowerService power)
+    {
+        _power = power;
+    }
+
+    public async Task<IReadOnlyList<Finding>> InvokeDiagnosticsAsync(CancellationToken ct = default)
+    {
+        ct.ThrowIfCancellationRequested();
+        var findings = new List<Finding>();
+        await Task.Run(() =>
         {
             ct.ThrowIfCancellationRequested();
-            var f = new List<Finding>();
-            CheckDiskHealth(f, ct);
-            CheckFreeSpace(f, ct);
-            CheckCloudShellExtensions(f, ct);
-            CheckQuickAccessBloat(f, ct);
-            CheckSearchIndex(f, ct);
-            CheckDiagTrack(f, ct);
-            CheckClassicRightClick(f, ct);
-            CheckPagefile(f, ct);
-            CheckStartupCount(f, ct);
-            CheckRamPressure(f, ct);
-            return f;
+            CheckDiskHealth(findings, ct);
+            CheckFreeSpace(findings, ct);
+            CheckCloudShellExtensions(findings, ct);
+            CheckQuickAccessBloat(findings, ct);
+            CheckSearchIndex(findings, ct);
+            CheckDiagTrack(findings, ct);
+            CheckClassicRightClick(findings, ct);
+            CheckPagefile(findings, ct);
+            CheckStartupCount(findings, ct);
+            CheckRamPressure(findings, ct);
         }, ct);
+        var battery = await CheckBatteryThrottling(ct);
+        if (battery is not null) findings.Add(battery);
+        return findings;
+    }
 
     private static void CheckDiskHealth(List<Finding> findings, CancellationToken ct)
     {
@@ -452,6 +464,75 @@ public sealed class DiagnoseService : IDiagnoseService
         {
             // ignore
         }
+    }
+
+    private async Task<Finding?> CheckBatteryThrottling(CancellationToken ct)
+    {
+        PowerState state;
+        try
+        {
+            state = await _power.CaptureCurrentAsync(ct);
+        }
+        catch (Exception ex)
+        {
+            return new Finding(
+                Id:       "diag.battery",
+                Severity: Severity.Yellow,
+                Title:    "Battery throttling detector unavailable",
+                Detail:   $"Could not read DC power settings: {ex.Message}",
+                Hint:     null,
+                Actions:  Array.Empty<FindingAction>());
+        }
+
+        var symptoms = new List<string>();
+        var actions  = new List<FindingAction>();
+
+        if (state.DcCpuMaxPct < 100)
+        {
+            symptoms.Add($"  - CPU max on DC: {state.DcCpuMaxPct}% (should be 100%)");
+            actions.Add(new FindingAction("battery.fix-cpu-max", "Fix CPU max", null));
+        }
+        if (state.DcEpp >= 32)
+        {
+            symptoms.Add($"  - EPP on DC: {state.DcEpp} (should be 0..31 / Performance)");
+            actions.Add(new FindingAction("battery.fix-epp", "Fix EPP", null));
+        }
+        if (state.DcCoolingPolicy == "Passive")
+        {
+            symptoms.Add("  - Cooling policy on DC: Passive (should be Active)");
+            actions.Add(new FindingAction("battery.fix-cooling", "Fix cooling", null));
+        }
+
+        var snapshotPresent = _power.SnapshotExists;
+        if (symptoms.Count == 0 && !snapshotPresent)
+            return null;
+
+        if (symptoms.Count > 0)
+        {
+            actions.Insert(0, new FindingAction("battery.unleash-all", "Unleash all", null));
+        }
+        if (snapshotPresent)
+        {
+            actions.Add(new FindingAction(
+                "battery.restore", "Restore prior settings",
+                Confirm: "Revert DC power settings to your prior values. Continue?"));
+        }
+
+        var detail = symptoms.Count > 0
+            ? $"Active plan: {state.ActiveScheme}\n" + string.Join("\n", symptoms)
+            : "DC power settings look healthy. A snapshot from a prior fix is still on disk; use Restore to delete it.";
+
+        return new Finding(
+            Id:       "diag.battery",
+            Severity: symptoms.Count > 0 ? Severity.Red : Severity.Green,
+            Title:    symptoms.Count > 0
+                          ? $"Battery throttling: {symptoms.Count} issue{(symptoms.Count == 1 ? "" : "s")}"
+                          : "Battery throttling: healthy (snapshot present)",
+            Detail:   detail,
+            Hint:     symptoms.Count > 0
+                          ? "Tier B fix: CPU max 100, EPP Performance, cooling Active. Reversible."
+                          : null,
+            Actions:  actions);
     }
 
     public Task<DiagnoseResult> ResetQuickAccessAsync(CancellationToken ct = default) =>

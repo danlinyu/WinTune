@@ -1,6 +1,7 @@
 using FluentAssertions;
 using WinTune.Core.Models;
 using WinTune.Core.Services;
+using WinTune.Core.Tests.TestHelpers;
 
 namespace WinTune.Core.Tests;
 
@@ -9,7 +10,7 @@ public class DiagnoseServiceTests
     [Fact]
     public async Task InvokeDiagnosticsAsync_returns_findings_with_required_fields()
     {
-        IDiagnoseService sut = new DiagnoseService();
+        IDiagnoseService sut = new DiagnoseService(new FakePowerService());
 
         var findings = await sut.InvokeDiagnosticsAsync();
 
@@ -24,7 +25,7 @@ public class DiagnoseServiceTests
     [Fact]
     public async Task InvokeDiagnosticsAsync_severities_are_in_known_set()
     {
-        IDiagnoseService sut = new DiagnoseService();
+        IDiagnoseService sut = new DiagnoseService(new FakePowerService());
 
         var findings = await sut.InvokeDiagnosticsAsync();
 
@@ -37,7 +38,7 @@ public class DiagnoseServiceTests
     [Fact]
     public async Task InvokeDiagnosticsAsync_findings_have_non_empty_Id()
     {
-        IDiagnoseService sut = new DiagnoseService();
+        IDiagnoseService sut = new DiagnoseService(new FakePowerService());
         var findings = await sut.InvokeDiagnosticsAsync();
         findings.Should().OnlyContain(f => !string.IsNullOrEmpty(f.Id));
     }
@@ -45,7 +46,7 @@ public class DiagnoseServiceTests
     [Fact]
     public async Task InvokeDiagnosticsAsync_respects_cancellation()
     {
-        IDiagnoseService sut = new DiagnoseService();
+        IDiagnoseService sut = new DiagnoseService(new FakePowerService());
         using var cts = new CancellationTokenSource();
         cts.Cancel();
 
@@ -61,7 +62,7 @@ public class DiagnoseServiceTests
     [Fact(Skip = "destructive: mutates HKCU and AppData — run manually")]
     public async Task EnableClassicRightClickAsync_smoke_local_only()
     {
-        IDiagnoseService sut = new DiagnoseService();
+        IDiagnoseService sut = new DiagnoseService(new FakePowerService());
         var r = await sut.EnableClassicRightClickAsync();
         r.Success.Should().BeTrue();
     }
