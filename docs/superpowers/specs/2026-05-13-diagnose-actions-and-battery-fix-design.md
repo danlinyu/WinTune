@@ -150,7 +150,7 @@ public DiagnoseService(
 | CheckDiagTrack        | `diag.diagtrack`   | `[diagtrack.disable, diagtrack.open-services]`               |
 | CheckClassicRightClick| `diag.classic`     | `[classic.enable, classic.undo]`                             |
 | CheckPagefile         | `diag.pagefile`    | `[pagefile.open-sysdm]`                                      |
-| CheckStartupCount     | `diag.startup`     | `[switch-to-startup-tab]`                                    |
+| CheckStartupCount     | `diag.startup`     | `[open-task-manager]` (Win11 has no separate startup deeplink and WinTune has no Startup tab; Task Manager's Startup tab is the canonical user-facing surface) |
 | CheckRamPressure      | `diag.ram`         | `[boost.clear-working-sets]`                                 |
 | CheckBatteryThrottling| `diag.battery`     | `[battery.unleash-all, battery.fix-cpu-max, battery.fix-epp, battery.fix-cooling, battery.restore]` |
 
@@ -166,7 +166,7 @@ public DiagnoseService(
 
 The five existing public commands (`ResetQuickAccessCommand`, `DisableTelemetryCommand`, `ToggleClassicMenuCommand`, `RebuildIndexCommand`, `UndoClassicMenuCommand`) become private async methods registered in `_actionHandlers` under the corresponding `ActionId`. Their bodies are unchanged — only the binding surface moves.
 
-For tab-switch actions (`switch-to-cleanup-tab`, `switch-to-startup-tab`) the handler raises a `TabSwitchRequested(string tabKey)` event the host `MainViewModel` subscribes to.
+For tab-switch actions (`switch-to-cleanup-tab` only — Startup uses an external Task Manager launch instead, since WinTune has no Startup tab) the handler raises a `TabSwitchRequested(string tabKey)` event the host `MainWindowViewModel` subscribes to.
 
 `ExecuteFindingActionCommand` implementation:
 1. Look up `ActionId` in `_actionHandlers`. Missing → status `"No handler for {ActionId}"`, return.
