@@ -28,6 +28,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\WinTune.Core\WinTune.Core.csproj" />
+    <ProjectReference Include="..\..\src\WinTune.App\WinTune.App.csproj" />
   </ItemGroup>
 
 </Project>

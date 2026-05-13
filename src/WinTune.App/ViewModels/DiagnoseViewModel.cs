@@ -29,6 +29,23 @@ public sealed partial class DiagnoseViewModel : ObservableObject
     public IReadOnlyDictionary<string, Func<CancellationToken, Task<FindingActionResult>>>
         ActionHandlersForTesting => _actionHandlers;
 
+    public static readonly IReadOnlySet<string> KnownActionIds = new HashSet<string>(StringComparer.Ordinal)
+    {
+        "qa.reset", "qa.open-folder-options",
+        "idx.rebuild", "idx.open-options",
+        "diagtrack.disable", "diagtrack.open-services",
+        "classic.enable", "classic.undo",
+        "pagefile.open-sysdm",
+        "open-reliability-monitor",
+        "open-shell-ext-docs",
+        "switch-to-cleanup-tab",
+        "open-task-manager",
+        "boost.clear-working-sets",
+        "battery.unleash-all", "battery.fix-cpu-max",
+        "battery.fix-epp", "battery.fix-cooling",
+        "battery.restore",
+    };
+
     public DiagnoseViewModel(IDiagnoseService diag, IBoostService boost, IPowerService power)
     {
         _diag  = diag;
@@ -261,5 +278,9 @@ public sealed partial class DiagnoseViewModel : ObservableObject
             var r = await _power.RestorePriorAsync(ct);
             return new FindingActionResult(r.Success, r.Note, r.Errors);
         };
+
+        System.Diagnostics.Debug.Assert(
+            _actionHandlers.Keys.ToHashSet().SetEquals(KnownActionIds),
+            "DiagnoseViewModel handler registry must match KnownActionIds exactly");
     }
 }
