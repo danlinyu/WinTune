@@ -83,7 +83,48 @@ public sealed class PowerService : IPowerService
         return new PowerFixResult(true, after, "Tier B applied", null);
     }
 
-    public Task<PowerFixResult> ApplySingleAsync  (BatteryKnob knob, CancellationToken ct) => throw new NotImplementedException();
+    public async Task<PowerFixResult> ApplySingleAsync(BatteryKnob knob, CancellationToken ct)
+    {
+        var before = await CaptureCurrentAsync(ct);
+
+        if (!File.Exists(_snapshotPath))
+        {
+            try
+            {
+                var json = System.Text.Json.JsonSerializer.Serialize(before);
+                await File.WriteAllTextAsync(_snapshotPath, json, ct);
+            }
+            catch (Exception ex)
+            {
+                return new PowerFixResult(false, null,
+                    "could not write snapshot — aborting fix to keep state reversible",
+                    new[] { ex.Message });
+            }
+        }
+
+        var errors = new List<string>();
+        switch (knob)
+        {
+            case BatteryKnob.CpuMax:
+                await SetDcAsync(PowerCfgIds.CpuMaxState,  100, errors, ct);
+                break;
+            case BatteryKnob.Epp:
+                await SetDcAsync(PowerCfgIds.Epp,            0, errors, ct);
+                break;
+            case BatteryKnob.Cooling:
+                await SetDcAsync(PowerCfgIds.CoolingPolicy,  1, errors, ct);
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(knob));
+        }
+        await CommitActiveSchemeAsync(errors, ct);
+
+        if (errors.Count > 0)
+            return new PowerFixResult(false, null, $"powercfg write failed for {knob}", errors);
+
+        var after = await CaptureCurrentAsync(ct);
+        return new PowerFixResult(true, after, $"{knob} set", null);
+    }
 
     public async Task<PowerFixResult> RestorePriorAsync(CancellationToken ct)
     {

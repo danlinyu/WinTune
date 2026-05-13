@@ -206,4 +206,56 @@ Subgroup GUID: 54533251-82be-4824-96c1-47b60b740d00  (Processor power management
         File.Delete(snapshotPath);
         sut.SnapshotExists.Should().BeFalse();
     }
+
+    [Fact]
+    public async Task ApplySingleAsync_CpuMax_sets_only_that_knob()
+    {
+        var runner       = BuildHealthyRunner();
+        var snapshotPath = Path.Combine(Path.GetTempPath(), $"wintune-{Guid.NewGuid()}.json");
+        var sut          = new PowerService(runner, snapshotPath);
+
+        var r = await sut.ApplySingleAsync(BatteryKnob.CpuMax, CancellationToken.None);
+
+        r.Success.Should().BeTrue();
+        runner.Calls.Should().Contain(c =>
+            c.Args.Contains("/setdcvalueindex") &&
+            c.Args.Contains(PowerCfgIds.CpuMaxState) &&
+            c.Args.Contains("100"));
+        runner.Calls.Should().NotContain(c =>
+            c.Args.Contains("/setdcvalueindex") &&
+            c.Args.Contains(PowerCfgIds.Epp));
+        File.Delete(snapshotPath);
+    }
+
+    [Fact]
+    public async Task ApplySingleAsync_Epp_sets_only_Epp()
+    {
+        var runner       = BuildHealthyRunner();
+        var snapshotPath = Path.Combine(Path.GetTempPath(), $"wintune-{Guid.NewGuid()}.json");
+        var sut          = new PowerService(runner, snapshotPath);
+
+        await sut.ApplySingleAsync(BatteryKnob.Epp, CancellationToken.None);
+
+        runner.Calls.Should().Contain(c =>
+            c.Args.Contains("/setdcvalueindex") &&
+            c.Args.Contains(PowerCfgIds.Epp) &&
+            c.Args.Contains("0"));
+        runner.Calls.Should().NotContain(c =>
+            c.Args.Contains("/setdcvalueindex") &&
+            c.Args.Contains(PowerCfgIds.CpuMaxState));
+        File.Delete(snapshotPath);
+    }
+
+    [Fact]
+    public async Task ApplySingleAsync_Cooling_writes_snapshot_first()
+    {
+        var runner       = BuildHealthyRunner();
+        var snapshotPath = Path.Combine(Path.GetTempPath(), $"wintune-{Guid.NewGuid()}.json");
+        var sut          = new PowerService(runner, snapshotPath);
+
+        await sut.ApplySingleAsync(BatteryKnob.Cooling, CancellationToken.None);
+
+        File.Exists(snapshotPath).Should().BeTrue();
+        File.Delete(snapshotPath);
+    }
 }
