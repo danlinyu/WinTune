@@ -38,6 +38,8 @@ public partial class App : Application
                 services.AddSingleton<IBoostService, BoostService>();
                 services.AddSingleton<ICleanupService, CleanupService>();
                 services.AddSingleton<IStartupService, StartupService>();
+                services.AddSingleton<IProcessRunner, ProcessRunner>();
+                services.AddSingleton<IPowerService,  PowerService>();
                 services.AddSingleton<IDiagnoseService, DiagnoseService>();
                 services.AddSingleton<IDedupService, DedupService>();
                 services.AddSingleton<IDedupHashCache, DedupHashCache>();
