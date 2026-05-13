@@ -66,4 +66,35 @@ public class DiagnoseServiceTests
         var r = await sut.EnableClassicRightClickAsync();
         r.Success.Should().BeTrue();
     }
+
+    [Fact]
+    public async Task each_detector_action_id_uses_the_detectors_finding_id_prefix_or_is_well_known()
+    {
+        IDiagnoseService sut = new DiagnoseService(new FakePowerService());
+        var findings = await sut.InvokeDiagnosticsAsync();
+
+        // Either there are zero actions, or every action ID belongs to the known registry.
+        var known = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "qa.reset",                 "qa.open-folder-options",
+            "idx.rebuild",              "idx.open-options",
+            "diagtrack.disable",        "diagtrack.open-services",
+            "classic.enable",           "classic.undo",
+            "pagefile.open-sysdm",
+            "open-task-manager",
+            "switch-to-cleanup-tab",
+            "boost.clear-working-sets",
+            "open-reliability-monitor",
+            "open-shell-ext-docs",
+            "battery.unleash-all",
+            "battery.fix-cpu-max",
+            "battery.fix-epp",
+            "battery.fix-cooling",
+            "battery.restore",
+        };
+
+        foreach (var f in findings)
+            foreach (var a in f.Actions)
+                known.Should().Contain(a.ActionId, $"action {a.ActionId} from finding {f.Id} must be registered");
+    }
 }

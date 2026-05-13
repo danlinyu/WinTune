@@ -73,7 +73,7 @@ public sealed class DiagnoseService : IDiagnoseService
                             Title: "Disk health warning",
                             Detail: $"{name}: Health={Format(health)}, Op={Format(op)}",
                             Hint: "Back up data immediately. Run vendor diagnostic tool.",
-                            Actions: Array.Empty<FindingAction>()));
+                            Actions: new[] { new FindingAction("open-reliability-monitor", "Open Reliability Monitor", null) }));
                     }
                 }
             }
@@ -128,7 +128,7 @@ public sealed class DiagnoseService : IDiagnoseService
                         Detail: string.Format(CultureInfo.InvariantCulture,
                             "{0:F1} GB free of {1:F1} GB ({2:F1}%)", freeGB, totalGB, pct),
                         Hint: "Win11 throttles disk I/O below ~10% free. Free space or move data.",
-                        Actions: Array.Empty<FindingAction>()));
+                        Actions: new[] { new FindingAction("switch-to-cleanup-tab", "Open Cleanup tab", null) }));
                 }
             }
             catch
@@ -181,7 +181,7 @@ public sealed class DiagnoseService : IDiagnoseService
                 Title: "Multiple cloud shell extensions loaded",
                 Detail: $"Explorer has {hits.Count} cloud DLLs: {string.Join(", ", hits)}",
                 Hint: "Pick ONE cloud, set BOTH to online-only / stream mode. Each shell ext queries cloud per file per folder open.",
-                Actions: Array.Empty<FindingAction>()));
+                Actions: new[] { new FindingAction("open-shell-ext-docs", "What is this?", null) }));
         }
         else if (hits.Count == 1)
         {
@@ -191,7 +191,7 @@ public sealed class DiagnoseService : IDiagnoseService
                 Title: "Cloud shell extension loaded",
                 Detail: $"Explorer has 1 cloud DLL: {hits[0]}",
                 Hint: "OK if intentional. Set Files On-Demand / Stream mode to avoid local copies.",
-                Actions: Array.Empty<FindingAction>()));
+                Actions: new[] { new FindingAction("open-shell-ext-docs", "What is this?", null) }));
         }
     }
 
@@ -225,7 +225,11 @@ public sealed class DiagnoseService : IDiagnoseService
                 Title: "Quick Access bloat",
                 Detail: $"{autoCount} AutomaticDestinations + {recentCount} Recent shortcuts = {totalQA} total",
                 Hint: "Stale entries referencing dead network paths cause Explorer to wait on timeout. Use \"Reset Quick Access\".",
-                Actions: Array.Empty<FindingAction>()));
+                Actions: new[]
+                {
+                    new FindingAction("qa.reset", "Reset Quick Access", null),
+                    new FindingAction("qa.open-folder-options", "Open Folder Options", null)
+                }));
         }
     }
 
@@ -252,7 +256,11 @@ public sealed class DiagnoseService : IDiagnoseService
                 Title: "Windows Search index path missing",
                 Detail: "CiFiles folder not found.",
                 Hint: "Use \"Rebuild Search Index\".",
-                Actions: Array.Empty<FindingAction>()));
+                Actions: new[]
+                {
+                    new FindingAction("idx.rebuild", "Rebuild index", null),
+                    new FindingAction("idx.open-options", "Open Indexing Options", null)
+                }));
             return;
         }
 
@@ -282,7 +290,11 @@ public sealed class DiagnoseService : IDiagnoseService
                 Title: "Windows Search index empty",
                 Detail: $"Index size: {mb} MB (expected: hundreds of MB)",
                 Hint: "Quick Access \"Frequent\" falls back to full FS scan. Use \"Rebuild Search Index\".",
-                Actions: Array.Empty<FindingAction>()));
+                Actions: new[]
+                {
+                    new FindingAction("idx.rebuild", "Rebuild index", null),
+                    new FindingAction("idx.open-options", "Open Indexing Options", null)
+                }));
         }
         else if (mb > 5000)
         {
@@ -292,7 +304,11 @@ public sealed class DiagnoseService : IDiagnoseService
                 Title: "Windows Search index large",
                 Detail: $"Index size: {mb} MB",
                 Hint: "Trim indexed locations: Settings -> Searching Windows -> Find My Files -> Customize.",
-                Actions: Array.Empty<FindingAction>()));
+                Actions: new[]
+                {
+                    new FindingAction("idx.rebuild", "Rebuild index", null),
+                    new FindingAction("idx.open-options", "Open Indexing Options", null)
+                }));
         }
         else
         {
@@ -320,7 +336,11 @@ public sealed class DiagnoseService : IDiagnoseService
                     Title: "Telemetry (DiagTrack) running",
                     Detail: $"Status: {sc.Status}, StartType: {sc.StartType}",
                     Hint: "Background disk + network I/O. Use \"Disable Telemetry\" -- no functional loss.",
-                    Actions: Array.Empty<FindingAction>()));
+                    Actions: new[]
+                    {
+                        new FindingAction("diagtrack.disable", "Disable Telemetry service", "Stop and disable DiagTrack. Continue?"),
+                        new FindingAction("diagtrack.open-services", "Open services.msc", null)
+                    }));
             }
         }
         catch
@@ -354,7 +374,11 @@ public sealed class DiagnoseService : IDiagnoseService
                     Title: "Win11 right-click menu uses overlay",
                     Detail: "Each right-click loads the new menu PLUS a \"Show more options\" indirection.",
                     Hint: "Use \"Apply Classic Right-Click\" -- restores Win10-style instant menu.",
-                    Actions: Array.Empty<FindingAction>()));
+                    Actions: new[]
+                    {
+                        new FindingAction("classic.enable", "Enable Classic right-click menu", null),
+                        new FindingAction("classic.undo", "Revert to modern menu", null)
+                    }));
             }
         }
         catch
@@ -391,7 +415,7 @@ public sealed class DiagnoseService : IDiagnoseService
                                 Detail: string.Format(CultureInfo.InvariantCulture,
                                     "Pagefile {0} on drive with {1:F1}% free.", name, freePct),
                                 Hint: "Move pagefile to drive with >20% free. Settings -> Performance -> Advanced -> Virtual Memory.",
-                                Actions: Array.Empty<FindingAction>()));
+                                Actions: new[] { new FindingAction("pagefile.open-sysdm", "Open System Properties", null) }));
                         }
                     }
                     catch
@@ -423,7 +447,7 @@ public sealed class DiagnoseService : IDiagnoseService
                     Title: "Many startup programs",
                     Detail: $"{count} entries in Win32_StartupCommand",
                     Hint: "Open Task Manager Startup tab and disable items you don't recognize.",
-                    Actions: Array.Empty<FindingAction>()));
+                    Actions: new[] { new FindingAction("open-task-manager", "Open Task Manager", null) }));
             }
         }
         catch
@@ -455,7 +479,7 @@ public sealed class DiagnoseService : IDiagnoseService
                             Title: "RAM pressure high",
                             Detail: string.Format(CultureInfo.InvariantCulture, "Only {0:F1}% free", pct),
                             Hint: "Use Boost tab -> \"Free RAM (Empty Working Sets)\".",
-                            Actions: Array.Empty<FindingAction>()));
+                            Actions: new[] { new FindingAction("boost.clear-working-sets", "Clear working sets", null) }));
                     }
                 }
             }
