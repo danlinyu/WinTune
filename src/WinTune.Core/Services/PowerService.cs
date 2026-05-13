@@ -6,9 +6,10 @@ namespace WinTune.Core.Services;
 
 public sealed class PowerService : IPowerService
 {
-    private static readonly string[] UnhideEppArgs      = { "/attributes", PowerCfgIds.SubProcessor, PowerCfgIds.Epp,           "-ATTRIB_HIDE" };
-    private static readonly string[] UnhideCoolingArgs  = { "/attributes", PowerCfgIds.SubProcessor, PowerCfgIds.CoolingPolicy, "-ATTRIB_HIDE" };
+    private static readonly string[] UnhideEppArgs       = { "/attributes", PowerCfgIds.SubProcessor, PowerCfgIds.Epp,           "-ATTRIB_HIDE" };
+    private static readonly string[] UnhideCoolingArgs   = { "/attributes", PowerCfgIds.SubProcessor, PowerCfgIds.CoolingPolicy, "-ATTRIB_HIDE" };
     private static readonly string[] GetActiveSchemeArgs = { "/getactivescheme" };
+    private static readonly string[] SetActiveArgs       = { "/setactive", "SCHEME_CURRENT" };
 
     private readonly IProcessRunner _proc;
     private readonly string         _snapshotPath;
@@ -50,9 +51,56 @@ public sealed class PowerService : IPowerService
             BatterySaverThresholdPct:  saver);
     }
 
-    public Task<PowerFixResult> ApplyTierBAsync   (CancellationToken ct) => throw new NotImplementedException();
+    public async Task<PowerFixResult> ApplyTierBAsync(CancellationToken ct)
+    {
+        var before = await CaptureCurrentAsync(ct);
+
+        if (!File.Exists(_snapshotPath))
+        {
+            try
+            {
+                var json = System.Text.Json.JsonSerializer.Serialize(before);
+                await File.WriteAllTextAsync(_snapshotPath, json, ct);
+            }
+            catch (Exception ex)
+            {
+                return new PowerFixResult(false, null,
+                    "could not write snapshot — aborting fix to keep state reversible",
+                    new[] { ex.Message });
+            }
+        }
+
+        var errors = new List<string>();
+        await SetDcAsync(PowerCfgIds.CpuMaxState,   100, errors, ct);
+        await SetDcAsync(PowerCfgIds.Epp,             0, errors, ct);
+        await SetDcAsync(PowerCfgIds.CoolingPolicy,   1, errors, ct);
+        await CommitActiveSchemeAsync(errors, ct);
+
+        if (errors.Count > 0)
+            return new PowerFixResult(false, null, "one or more powercfg writes failed", errors);
+
+        var after = await CaptureCurrentAsync(ct);
+        return new PowerFixResult(true, after, "Tier B applied", null);
+    }
+
     public Task<PowerFixResult> ApplySingleAsync  (BatteryKnob knob, CancellationToken ct) => throw new NotImplementedException();
     public Task<PowerFixResult> RestorePriorAsync (CancellationToken ct) => throw new NotImplementedException();
+
+    private async Task SetDcAsync(string settingGuid, int value, List<string> errors, CancellationToken ct)
+    {
+        var r = await _proc.RunAsync("powercfg",
+            new[] { "/setdcvalueindex", "SCHEME_CURRENT", PowerCfgIds.SubProcessor, settingGuid,
+                    value.ToString(CultureInfo.InvariantCulture) }, ct);
+        if (r.ExitCode != 0)
+            errors.Add($"setdcvalueindex {settingGuid} -> {value}: exit {r.ExitCode}; {r.Stderr.Trim()}");
+    }
+
+    private async Task CommitActiveSchemeAsync(List<string> errors, CancellationToken ct)
+    {
+        var r = await _proc.RunAsync("powercfg", SetActiveArgs, ct);
+        if (r.ExitCode != 0)
+            errors.Add($"setactive: exit {r.ExitCode}; {r.Stderr.Trim()}");
+    }
 
     private async Task EnsureUnhiddenAsync(CancellationToken ct)
     {

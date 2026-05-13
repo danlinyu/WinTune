@@ -80,4 +80,67 @@ Subgroup GUID: 54533251-82be-4824-96c1-47b60b740d00  (Processor power management
 
         state.DcCoolingPolicy.Should().Be("Passive");
     }
+
+    [Fact]
+    public async Task ApplyTierBAsync_writes_snapshot_then_sets_three_dc_values()
+    {
+        var runner       = BuildHealthyRunner();
+        var snapshotPath = Path.Combine(Path.GetTempPath(), $"wintune-{Guid.NewGuid()}.json");
+        var sut          = new PowerService(runner, snapshotPath);
+
+        var r = await sut.ApplyTierBAsync(CancellationToken.None);
+
+        r.Success.Should().BeTrue();
+        File.Exists(snapshotPath).Should().BeTrue();
+
+        runner.Calls.Should().Contain(c =>
+            c.Args.Contains("/setdcvalueindex") &&
+            c.Args.Contains(PowerCfgIds.CpuMaxState) &&
+            c.Args.Contains("100"));
+        runner.Calls.Should().Contain(c =>
+            c.Args.Contains("/setdcvalueindex") &&
+            c.Args.Contains(PowerCfgIds.Epp) &&
+            c.Args.Contains("0"));
+        runner.Calls.Should().Contain(c =>
+            c.Args.Contains("/setdcvalueindex") &&
+            c.Args.Contains(PowerCfgIds.CoolingPolicy) &&
+            c.Args.Contains("1"));
+        runner.Calls.Should().Contain(c => c.Args.Contains("/setactive"));
+
+        File.Delete(snapshotPath);
+    }
+
+    [Fact]
+    public async Task ApplyTierBAsync_does_not_overwrite_existing_snapshot()
+    {
+        var runner       = BuildHealthyRunner();
+        var snapshotPath = Path.Combine(Path.GetTempPath(), $"wintune-{Guid.NewGuid()}.json");
+        File.WriteAllText(snapshotPath, "{\"sentinel\":42}");
+        var originalLen  = new FileInfo(snapshotPath).Length;
+        var sut          = new PowerService(runner, snapshotPath);
+
+        await sut.ApplyTierBAsync(CancellationToken.None);
+
+        File.ReadAllText(snapshotPath).Should().Contain("\"sentinel\":42");
+        new FileInfo(snapshotPath).Length.Should().Be(originalLen);
+
+        File.Delete(snapshotPath);
+    }
+
+    [Fact]
+    public async Task ApplyTierBAsync_returns_failure_on_powercfg_nonzero_exit()
+    {
+        var runner       = BuildHealthyRunner();
+        runner.When("/setdcvalueindex",
+            new ProcessResult(1, "", "Access denied."));
+        var snapshotPath = Path.Combine(Path.GetTempPath(), $"wintune-{Guid.NewGuid()}.json");
+        var sut          = new PowerService(runner, snapshotPath);
+
+        var r = await sut.ApplyTierBAsync(CancellationToken.None);
+
+        r.Success.Should().BeFalse();
+        r.Errors.Should().NotBeEmpty();
+
+        if (File.Exists(snapshotPath)) File.Delete(snapshotPath);
+    }
 }

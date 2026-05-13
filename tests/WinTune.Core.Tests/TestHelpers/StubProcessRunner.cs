@@ -23,7 +23,7 @@ public sealed class StubProcessRunner : IProcessRunner
         var argString = string.Join(" ", arguments);
         Calls.Add((fileName, arguments.ToArray()));
 
-        foreach (var (needle, response) in _scripted)
+        foreach (var (needle, response) in _scripted.Reverse())
             if (argString.Contains(needle, StringComparison.OrdinalIgnoreCase))
                 return Task.FromResult(response);
 
