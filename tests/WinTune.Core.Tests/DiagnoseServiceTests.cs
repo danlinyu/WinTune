@@ -35,6 +35,14 @@ public class DiagnoseServiceTests
     }
 
     [Fact]
+    public async Task InvokeDiagnosticsAsync_findings_have_non_empty_Id()
+    {
+        IDiagnoseService sut = new DiagnoseService();
+        var findings = await sut.InvokeDiagnosticsAsync();
+        findings.Should().OnlyContain(f => !string.IsNullOrEmpty(f.Id));
+    }
+
+    [Fact]
     public async Task InvokeDiagnosticsAsync_respects_cancellation()
     {
         IDiagnoseService sut = new DiagnoseService();

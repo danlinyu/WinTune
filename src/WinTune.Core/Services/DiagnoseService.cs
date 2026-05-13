@@ -56,10 +56,12 @@ public sealed class DiagnoseService : IDiagnoseService
                     {
                         foundIssue = true;
                         findings.Add(new Finding(
-                            Severity.Red,
-                            "Disk health warning",
-                            $"{name}: Health={Format(health)}, Op={Format(op)}",
-                            "Back up data immediately. Run vendor diagnostic tool."));
+                            Id: "diag.disk",
+                            Severity: Severity.Red,
+                            Title: "Disk health warning",
+                            Detail: $"{name}: Health={Format(health)}, Op={Format(op)}",
+                            Hint: "Back up data immediately. Run vendor diagnostic tool.",
+                            Actions: Array.Empty<FindingAction>()));
                     }
                 }
             }
@@ -72,7 +74,12 @@ public sealed class DiagnoseService : IDiagnoseService
         if (!foundIssue)
         {
             findings.Add(new Finding(
-                Severity.Green, "Disk health", "All physical disks Healthy / OK.", null));
+                Id: "diag.disk",
+                Severity: Severity.Green,
+                Title: "Disk health",
+                Detail: "All physical disks Healthy / OK.",
+                Hint: null,
+                Actions: Array.Empty<FindingAction>()));
         }
 
         static string Format(object? value) => value switch
@@ -103,11 +110,13 @@ public sealed class DiagnoseService : IDiagnoseService
                 if (sev != Severity.Green)
                 {
                     findings.Add(new Finding(
-                        sev,
-                        $"Drive {d.Name.TrimEnd('\\')}: low free space",
-                        string.Format(CultureInfo.InvariantCulture,
+                        Id: "diag.freespace",
+                        Severity: sev,
+                        Title: $"Drive {d.Name.TrimEnd('\\')}: low free space",
+                        Detail: string.Format(CultureInfo.InvariantCulture,
                             "{0:F1} GB free of {1:F1} GB ({2:F1}%)", freeGB, totalGB, pct),
-                        "Win11 throttles disk I/O below ~10% free. Free space or move data."));
+                        Hint: "Win11 throttles disk I/O below ~10% free. Free space or move data.",
+                        Actions: Array.Empty<FindingAction>()));
                 }
             }
             catch
@@ -155,18 +164,22 @@ public sealed class DiagnoseService : IDiagnoseService
         if (hits.Count > 1)
         {
             findings.Add(new Finding(
-                Severity.Red,
-                "Multiple cloud shell extensions loaded",
-                $"Explorer has {hits.Count} cloud DLLs: {string.Join(", ", hits)}",
-                "Pick ONE cloud, set BOTH to online-only / stream mode. Each shell ext queries cloud per file per folder open."));
+                Id: "diag.shell-ext",
+                Severity: Severity.Red,
+                Title: "Multiple cloud shell extensions loaded",
+                Detail: $"Explorer has {hits.Count} cloud DLLs: {string.Join(", ", hits)}",
+                Hint: "Pick ONE cloud, set BOTH to online-only / stream mode. Each shell ext queries cloud per file per folder open.",
+                Actions: Array.Empty<FindingAction>()));
         }
         else if (hits.Count == 1)
         {
             findings.Add(new Finding(
-                Severity.Yellow,
-                "Cloud shell extension loaded",
-                $"Explorer has 1 cloud DLL: {hits[0]}",
-                "OK if intentional. Set Files On-Demand / Stream mode to avoid local copies."));
+                Id: "diag.shell-ext",
+                Severity: Severity.Yellow,
+                Title: "Cloud shell extension loaded",
+                Detail: $"Explorer has 1 cloud DLL: {hits[0]}",
+                Hint: "OK if intentional. Set Files On-Demand / Stream mode to avoid local copies.",
+                Actions: Array.Empty<FindingAction>()));
         }
     }
 
@@ -184,15 +197,23 @@ public sealed class DiagnoseService : IDiagnoseService
         Severity sev = totalQA > 300 ? Severity.Red : (totalQA > 100 ? Severity.Yellow : Severity.Green);
         if (sev == Severity.Green)
         {
-            findings.Add(new Finding(Severity.Green, "Quick Access", $"{totalQA} recent entries", null));
+            findings.Add(new Finding(
+                Id: "diag.qa-bloat",
+                Severity: Severity.Green,
+                Title: "Quick Access",
+                Detail: $"{totalQA} recent entries",
+                Hint: null,
+                Actions: Array.Empty<FindingAction>()));
         }
         else
         {
             findings.Add(new Finding(
-                sev,
-                "Quick Access bloat",
-                $"{autoCount} AutomaticDestinations + {recentCount} Recent shortcuts = {totalQA} total",
-                "Stale entries referencing dead network paths cause Explorer to wait on timeout. Use \"Reset Quick Access\"."));
+                Id: "diag.qa-bloat",
+                Severity: sev,
+                Title: "Quick Access bloat",
+                Detail: $"{autoCount} AutomaticDestinations + {recentCount} Recent shortcuts = {totalQA} total",
+                Hint: "Stale entries referencing dead network paths cause Explorer to wait on timeout. Use \"Reset Quick Access\".",
+                Actions: Array.Empty<FindingAction>()));
         }
     }
 
@@ -214,10 +235,12 @@ public sealed class DiagnoseService : IDiagnoseService
         if (!Directory.Exists(idxBase))
         {
             findings.Add(new Finding(
-                Severity.Yellow,
-                "Windows Search index path missing",
-                "CiFiles folder not found.",
-                "Use \"Rebuild Search Index\"."));
+                Id: "diag.search-idx",
+                Severity: Severity.Yellow,
+                Title: "Windows Search index path missing",
+                Detail: "CiFiles folder not found.",
+                Hint: "Use \"Rebuild Search Index\".",
+                Actions: Array.Empty<FindingAction>()));
             return;
         }
 
@@ -242,22 +265,32 @@ public sealed class DiagnoseService : IDiagnoseService
         if (mb < 50)
         {
             findings.Add(new Finding(
-                Severity.Red,
-                "Windows Search index empty",
-                $"Index size: {mb} MB (expected: hundreds of MB)",
-                "Quick Access \"Frequent\" falls back to full FS scan. Use \"Rebuild Search Index\"."));
+                Id: "diag.search-idx",
+                Severity: Severity.Red,
+                Title: "Windows Search index empty",
+                Detail: $"Index size: {mb} MB (expected: hundreds of MB)",
+                Hint: "Quick Access \"Frequent\" falls back to full FS scan. Use \"Rebuild Search Index\".",
+                Actions: Array.Empty<FindingAction>()));
         }
         else if (mb > 5000)
         {
             findings.Add(new Finding(
-                Severity.Yellow,
-                "Windows Search index large",
-                $"Index size: {mb} MB",
-                "Trim indexed locations: Settings -> Searching Windows -> Find My Files -> Customize."));
+                Id: "diag.search-idx",
+                Severity: Severity.Yellow,
+                Title: "Windows Search index large",
+                Detail: $"Index size: {mb} MB",
+                Hint: "Trim indexed locations: Settings -> Searching Windows -> Find My Files -> Customize.",
+                Actions: Array.Empty<FindingAction>()));
         }
         else
         {
-            findings.Add(new Finding(Severity.Green, "Windows Search index", $"{mb} MB", null));
+            findings.Add(new Finding(
+                Id: "diag.search-idx",
+                Severity: Severity.Green,
+                Title: "Windows Search index",
+                Detail: $"{mb} MB",
+                Hint: null,
+                Actions: Array.Empty<FindingAction>()));
         }
     }
 
@@ -270,10 +303,12 @@ public sealed class DiagnoseService : IDiagnoseService
             if (sc.Status == ServiceControllerStatus.Running)
             {
                 findings.Add(new Finding(
-                    Severity.Yellow,
-                    "Telemetry (DiagTrack) running",
-                    $"Status: {sc.Status}, StartType: {sc.StartType}",
-                    "Background disk + network I/O. Use \"Disable Telemetry\" -- no functional loss."));
+                    Id: "diag.diagtrack",
+                    Severity: Severity.Yellow,
+                    Title: "Telemetry (DiagTrack) running",
+                    Detail: $"Status: {sc.Status}, StartType: {sc.StartType}",
+                    Hint: "Background disk + network I/O. Use \"Disable Telemetry\" -- no functional loss.",
+                    Actions: Array.Empty<FindingAction>()));
             }
         }
         catch
@@ -292,15 +327,22 @@ public sealed class DiagnoseService : IDiagnoseService
             if (key is not null)
             {
                 findings.Add(new Finding(
-                    Severity.Green, "Right-click menu", "Classic Win10 menu enabled.", null));
+                    Id: "diag.classic",
+                    Severity: Severity.Green,
+                    Title: "Right-click menu",
+                    Detail: "Classic Win10 menu enabled.",
+                    Hint: null,
+                    Actions: Array.Empty<FindingAction>()));
             }
             else
             {
                 findings.Add(new Finding(
-                    Severity.Yellow,
-                    "Win11 right-click menu uses overlay",
-                    "Each right-click loads the new menu PLUS a \"Show more options\" indirection.",
-                    "Use \"Apply Classic Right-Click\" -- restores Win10-style instant menu."));
+                    Id: "diag.classic",
+                    Severity: Severity.Yellow,
+                    Title: "Win11 right-click menu uses overlay",
+                    Detail: "Each right-click loads the new menu PLUS a \"Show more options\" indirection.",
+                    Hint: "Use \"Apply Classic Right-Click\" -- restores Win10-style instant menu.",
+                    Actions: Array.Empty<FindingAction>()));
             }
         }
         catch
@@ -331,11 +373,13 @@ public sealed class DiagnoseService : IDiagnoseService
                         if (freePct < 15)
                         {
                             findings.Add(new Finding(
-                                Severity.Red,
-                                "Pagefile on full drive",
-                                string.Format(CultureInfo.InvariantCulture,
+                                Id: "diag.pagefile",
+                                Severity: Severity.Red,
+                                Title: "Pagefile on full drive",
+                                Detail: string.Format(CultureInfo.InvariantCulture,
                                     "Pagefile {0} on drive with {1:F1}% free.", name, freePct),
-                                "Move pagefile to drive with >20% free. Settings -> Performance -> Advanced -> Virtual Memory."));
+                                Hint: "Move pagefile to drive with >20% free. Settings -> Performance -> Advanced -> Virtual Memory.",
+                                Actions: Array.Empty<FindingAction>()));
                         }
                     }
                     catch
@@ -362,10 +406,12 @@ public sealed class DiagnoseService : IDiagnoseService
             if (count > 15)
             {
                 findings.Add(new Finding(
-                    Severity.Yellow,
-                    "Many startup programs",
-                    $"{count} entries in Win32_StartupCommand",
-                    "Open Task Manager Startup tab and disable items you don't recognize."));
+                    Id: "diag.startup",
+                    Severity: Severity.Yellow,
+                    Title: "Many startup programs",
+                    Detail: $"{count} entries in Win32_StartupCommand",
+                    Hint: "Open Task Manager Startup tab and disable items you don't recognize.",
+                    Actions: Array.Empty<FindingAction>()));
             }
         }
         catch
@@ -392,10 +438,12 @@ public sealed class DiagnoseService : IDiagnoseService
                     if (pct < 10)
                     {
                         findings.Add(new Finding(
-                            Severity.Red,
-                            "RAM pressure high",
-                            string.Format(CultureInfo.InvariantCulture, "Only {0:F1}% free", pct),
-                            "Use Boost tab -> \"Free RAM (Empty Working Sets)\"."));
+                            Id: "diag.ram",
+                            Severity: Severity.Red,
+                            Title: "RAM pressure high",
+                            Detail: string.Format(CultureInfo.InvariantCulture, "Only {0:F1}% free", pct),
+                            Hint: "Use Boost tab -> \"Free RAM (Empty Working Sets)\".",
+                            Actions: Array.Empty<FindingAction>()));
                     }
                 }
             }

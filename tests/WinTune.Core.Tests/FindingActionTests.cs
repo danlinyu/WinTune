@@ -47,3 +47,36 @@ public class FindingActionTests
         r.Errors.Should().HaveCount(2);
     }
 }
+
+public class FindingShapeTests
+{
+    [Fact]
+    public void Finding_exposes_Id_and_Actions()
+    {
+        var f = new Finding(
+            Id: "diag.demo",
+            Severity: Severity.Green,
+            Title: "All good",
+            Detail: "Nothing to do",
+            Hint: null,
+            Actions: Array.Empty<FindingAction>());
+
+        f.Id.Should().Be("diag.demo");
+        f.Actions.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void Finding_with_actions_lists_them()
+    {
+        var f = new Finding(
+            Id: "diag.demo",
+            Severity: Severity.Red,
+            Title: "Demo",
+            Detail: "Detail",
+            Hint: "Hint",
+            Actions: new[] { new FindingAction("demo.fix", "Fix it", null) });
+
+        f.Actions.Should().HaveCount(1);
+        f.Actions[0].ActionId.Should().Be("demo.fix");
+    }
+}
