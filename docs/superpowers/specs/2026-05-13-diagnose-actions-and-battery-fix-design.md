@@ -3,7 +3,7 @@
 > Status: draft, awaiting user review.
 > Author: Claude Code session, 2026-05-13.
 > Repo: `danlinyu/WinTune`, branch `main` at `84d8502`.
-> Implementation plan: TBD — generated via superpowers:writing-plans after this spec is approved.
+> Implementation plan: `docs/superpowers/plans/2026-05-13-diagnose-actions-and-battery-fix.md`.
 
 ## 1. Problem
 
