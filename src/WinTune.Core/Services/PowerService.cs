@@ -71,9 +71,9 @@ public sealed class PowerService : IPowerService
         }
 
         var errors = new List<string>();
-        await SetDcAsync(PowerCfgIds.CpuMaxState,   100, errors, ct);
-        await SetDcAsync(PowerCfgIds.Epp,             0, errors, ct);
-        await SetDcAsync(PowerCfgIds.CoolingPolicy,   1, errors, ct);
+        await SetDcAsync(PowerCfgIds.SubProcessor, PowerCfgIds.CpuMaxState,   100, errors, ct);
+        await SetDcAsync(PowerCfgIds.SubProcessor, PowerCfgIds.Epp,             0, errors, ct);
+        await SetDcAsync(PowerCfgIds.SubProcessor, PowerCfgIds.CoolingPolicy,   1, errors, ct);
         await CommitActiveSchemeAsync(errors, ct);
 
         if (errors.Count > 0)
@@ -106,13 +106,13 @@ public sealed class PowerService : IPowerService
         switch (knob)
         {
             case BatteryKnob.CpuMax:
-                await SetDcAsync(PowerCfgIds.CpuMaxState,  100, errors, ct);
+                await SetDcAsync(PowerCfgIds.SubProcessor, PowerCfgIds.CpuMaxState,  100, errors, ct);
                 break;
             case BatteryKnob.Epp:
-                await SetDcAsync(PowerCfgIds.Epp,            0, errors, ct);
+                await SetDcAsync(PowerCfgIds.SubProcessor, PowerCfgIds.Epp,            0, errors, ct);
                 break;
             case BatteryKnob.Cooling:
-                await SetDcAsync(PowerCfgIds.CoolingPolicy,  1, errors, ct);
+                await SetDcAsync(PowerCfgIds.SubProcessor, PowerCfgIds.CoolingPolicy,  1, errors, ct);
                 break;
             default:
                 throw new ArgumentOutOfRangeException(nameof(knob));
@@ -152,10 +152,10 @@ public sealed class PowerService : IPowerService
                 $"snapshot cooling-policy '{prior.DcCoolingPolicy}' is not Passive/Active")
         };
 
-        await SetDcAsync(PowerCfgIds.CpuMaxState,   prior.DcCpuMaxPct, errors, ct);
-        await SetDcAsync(PowerCfgIds.CpuMinState,   prior.DcCpuMinPct, errors, ct);
-        await SetDcAsync(PowerCfgIds.Epp,           prior.DcEpp,       errors, ct);
-        await SetDcAsync(PowerCfgIds.CoolingPolicy, cooling,           errors, ct);
+        await SetDcAsync(PowerCfgIds.SubProcessor, PowerCfgIds.CpuMaxState,   prior.DcCpuMaxPct, errors, ct);
+        await SetDcAsync(PowerCfgIds.SubProcessor, PowerCfgIds.CpuMinState,   prior.DcCpuMinPct, errors, ct);
+        await SetDcAsync(PowerCfgIds.SubProcessor, PowerCfgIds.Epp,           prior.DcEpp,       errors, ct);
+        await SetDcAsync(PowerCfgIds.SubProcessor, PowerCfgIds.CoolingPolicy, cooling,           errors, ct);
         await CommitActiveSchemeAsync(errors, ct);
 
         if (errors.Count > 0)
@@ -166,10 +166,10 @@ public sealed class PowerService : IPowerService
         return new PowerFixResult(true, after, "restored to prior DC settings", null);
     }
 
-    private async Task SetDcAsync(string settingGuid, int value, List<string> errors, CancellationToken ct)
+    private async Task SetDcAsync(string subgroupGuid, string settingGuid, int value, List<string> errors, CancellationToken ct)
     {
         var r = await _proc.RunAsync("powercfg",
-            new[] { "/setdcvalueindex", "SCHEME_CURRENT", PowerCfgIds.SubProcessor, settingGuid,
+            new[] { "/setdcvalueindex", "SCHEME_CURRENT", subgroupGuid, settingGuid,
                     value.ToString(CultureInfo.InvariantCulture) }, ct);
         if (r.ExitCode != 0)
             errors.Add($"setdcvalueindex {settingGuid} -> {value}: exit {r.ExitCode}; {r.Stderr.Trim()}");
