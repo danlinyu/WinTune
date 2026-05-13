@@ -84,7 +84,46 @@ public sealed class PowerService : IPowerService
     }
 
     public Task<PowerFixResult> ApplySingleAsync  (BatteryKnob knob, CancellationToken ct) => throw new NotImplementedException();
-    public Task<PowerFixResult> RestorePriorAsync (CancellationToken ct) => throw new NotImplementedException();
+
+    public async Task<PowerFixResult> RestorePriorAsync(CancellationToken ct)
+    {
+        if (!File.Exists(_snapshotPath))
+            return new PowerFixResult(false, null, "no snapshot — nothing to restore", null);
+
+        PowerState prior;
+        try
+        {
+            var json = await File.ReadAllTextAsync(_snapshotPath, ct);
+            prior = System.Text.Json.JsonSerializer.Deserialize<PowerState>(json)
+                ?? throw new InvalidOperationException("snapshot deserialized to null");
+        }
+        catch (Exception ex)
+        {
+            return new PowerFixResult(false, null, "snapshot file unreadable", new[] { ex.Message });
+        }
+
+        var errors  = new List<string>();
+        var cooling = prior.DcCoolingPolicy switch
+        {
+            "Passive" => 0,
+            "Active"  => 1,
+            _         => throw new InvalidOperationException(
+                $"snapshot cooling-policy '{prior.DcCoolingPolicy}' is not Passive/Active")
+        };
+
+        await SetDcAsync(PowerCfgIds.CpuMaxState,   prior.DcCpuMaxPct, errors, ct);
+        await SetDcAsync(PowerCfgIds.CpuMinState,   prior.DcCpuMinPct, errors, ct);
+        await SetDcAsync(PowerCfgIds.Epp,           prior.DcEpp,       errors, ct);
+        await SetDcAsync(PowerCfgIds.CoolingPolicy, cooling,           errors, ct);
+        await CommitActiveSchemeAsync(errors, ct);
+
+        if (errors.Count > 0)
+            return new PowerFixResult(false, null, "one or more powercfg writes failed", errors);
+
+        File.Delete(_snapshotPath);
+        var after = await CaptureCurrentAsync(ct);
+        return new PowerFixResult(true, after, "restored to prior DC settings", null);
+    }
 
     private async Task SetDcAsync(string settingGuid, int value, List<string> errors, CancellationToken ct)
     {

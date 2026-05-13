@@ -143,4 +143,67 @@ Subgroup GUID: 54533251-82be-4824-96c1-47b60b740d00  (Processor power management
 
         if (File.Exists(snapshotPath)) File.Delete(snapshotPath);
     }
+
+    [Fact]
+    public async Task RestorePriorAsync_reads_snapshot_writes_values_back_deletes_file()
+    {
+        var runner       = BuildHealthyRunner();
+        var snapshotPath = Path.Combine(Path.GetTempPath(), $"wintune-{Guid.NewGuid()}.json");
+        var prior = new PowerState(
+            ActiveScheme:              Guid.Parse("381b4222-f694-41f0-9685-ff5bb260df2e"),
+            DcCpuMaxPct:               50,
+            DcCpuMinPct:               5,
+            DcEpp:                     80,
+            DcCoolingPolicy:           "Passive",
+            BatterySaverThresholdPct:  20);
+        File.WriteAllText(snapshotPath, System.Text.Json.JsonSerializer.Serialize(prior));
+        var sut = new PowerService(runner, snapshotPath);
+
+        var r = await sut.RestorePriorAsync(CancellationToken.None);
+
+        r.Success.Should().BeTrue();
+        File.Exists(snapshotPath).Should().BeFalse();
+
+        runner.Calls.Should().Contain(c =>
+            c.Args.Contains("/setdcvalueindex") &&
+            c.Args.Contains(PowerCfgIds.CpuMaxState) &&
+            c.Args.Contains("50"));
+        runner.Calls.Should().Contain(c =>
+            c.Args.Contains("/setdcvalueindex") &&
+            c.Args.Contains(PowerCfgIds.Epp) &&
+            c.Args.Contains("80"));
+        runner.Calls.Should().Contain(c =>
+            c.Args.Contains("/setdcvalueindex") &&
+            c.Args.Contains(PowerCfgIds.CoolingPolicy) &&
+            c.Args.Contains("0"));
+    }
+
+    [Fact]
+    public async Task RestorePriorAsync_without_snapshot_returns_failure()
+    {
+        var runner       = BuildHealthyRunner();
+        var snapshotPath = Path.Combine(Path.GetTempPath(), $"wintune-missing-{Guid.NewGuid()}.json");
+        var sut          = new PowerService(runner, snapshotPath);
+
+        var r = await sut.RestorePriorAsync(CancellationToken.None);
+
+        r.Success.Should().BeFalse();
+        r.Note.Should().Contain("no snapshot");
+    }
+
+    [Fact]
+    public void SnapshotExists_tracks_file_existence()
+    {
+        var runner       = BuildHealthyRunner();
+        var snapshotPath = Path.Combine(Path.GetTempPath(), $"wintune-exist-{Guid.NewGuid()}.json");
+        var sut          = new PowerService(runner, snapshotPath);
+
+        sut.SnapshotExists.Should().BeFalse();
+
+        File.WriteAllText(snapshotPath, "{}");
+        sut.SnapshotExists.Should().BeTrue();
+
+        File.Delete(snapshotPath);
+        sut.SnapshotExists.Should().BeFalse();
+    }
 }
