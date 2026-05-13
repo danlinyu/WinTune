@@ -41,7 +41,8 @@
             </StackPanel>
         </Border>
 
-        <TabControl Margin="10" Background="Transparent" BorderThickness="0">
+        <TabControl Margin="10" Background="Transparent" BorderThickness="0"
+                    SelectedIndex="{Binding SelectedTabIndex, Mode=TwoWay}">
 
             <!-- =========================== DASHBOARD =========================== -->
             <TabItem Header="  Dashboard  ">
