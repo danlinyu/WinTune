@@ -235,6 +235,31 @@ public sealed partial class DiagnoseViewModel : ObservableObject
                 Errors:  null);
         };
 
-        // ---- Battery (handlers wired in Task 15) ----
+        // ---- Battery ----
+        _actionHandlers["battery.unleash-all"] = async ct =>
+        {
+            var r = await _power.ApplyTierBAsync(ct);
+            return new FindingActionResult(r.Success, r.Note, r.Errors);
+        };
+        _actionHandlers["battery.fix-cpu-max"] = async ct =>
+        {
+            var r = await _power.ApplySingleAsync(BatteryKnob.CpuMax, ct);
+            return new FindingActionResult(r.Success, r.Note, r.Errors);
+        };
+        _actionHandlers["battery.fix-epp"] = async ct =>
+        {
+            var r = await _power.ApplySingleAsync(BatteryKnob.Epp, ct);
+            return new FindingActionResult(r.Success, r.Note, r.Errors);
+        };
+        _actionHandlers["battery.fix-cooling"] = async ct =>
+        {
+            var r = await _power.ApplySingleAsync(BatteryKnob.Cooling, ct);
+            return new FindingActionResult(r.Success, r.Note, r.Errors);
+        };
+        _actionHandlers["battery.restore"] = async ct =>
+        {
+            var r = await _power.RestorePriorAsync(ct);
+            return new FindingActionResult(r.Success, r.Note, r.Errors);
+        };
     }
 }
