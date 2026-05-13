@@ -24,9 +24,7 @@ public sealed partial class DiagnoseViewModel : ObservableObject
 
     public ObservableCollection<Finding> Findings { get; } = new();
 
-#pragma warning disable CS0067 // event unused until T20 wires TabSwitchRequested
     public event Action<string>? TabSwitchRequested;
-#pragma warning restore CS0067
 
     public IReadOnlyDictionary<string, Func<CancellationToken, Task<FindingActionResult>>>
         ActionHandlersForTesting => _actionHandlers;
@@ -114,11 +112,129 @@ public sealed partial class DiagnoseViewModel : ObservableObject
         await RunDiagnosticsAsync();
     }
 
-#pragma warning disable CA1822 // will access _actionHandlers once T14/T15 populate it
     private void RegisterHandlers()
     {
-        // Stub — populated by Task 14 (existing 5 fixes + cross-tab + boost)
-        // and Task 15 (battery handlers).
+        // ---- Quick Access ----
+        _actionHandlers["qa.reset"] = async ct =>
+        {
+            var r = await _diag.ResetQuickAccessAsync(ct);
+            return new FindingActionResult(
+                Success: true,
+                Note:    $"Reset Quick Access: removed {r.FilesRemoved} files. {r.Note}",
+                Errors:  null);
+        };
+        _actionHandlers["qa.open-folder-options"] = _ =>
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName        = "rundll32.exe",
+                Arguments       = "shell32.dll,Options_RunDLL 0",
+                UseShellExecute = true
+            });
+            return Task.FromResult(new FindingActionResult(true, "Folder Options opened", null));
+        };
+
+        // ---- Search index ----
+        _actionHandlers["idx.rebuild"] = async ct =>
+        {
+            var r = await _diag.StartSearchIndexRebuildAsync(ct);
+            return new FindingActionResult(r.Success, r.Note, null);
+        };
+        _actionHandlers["idx.open-options"] = _ =>
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName        = "control.exe",
+                Arguments       = "/name Microsoft.IndexingOptions",
+                UseShellExecute = true
+            });
+            return Task.FromResult(new FindingActionResult(true, "Indexing Options opened", null));
+        };
+
+        // ---- Telemetry ----
+        _actionHandlers["diagtrack.disable"] = async ct =>
+        {
+            var r = await _diag.DisableTelemetryAsync(ct);
+            return new FindingActionResult(r.Success, r.Note, null);
+        };
+        _actionHandlers["diagtrack.open-services"] = _ =>
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName        = "services.msc",
+                UseShellExecute = true
+            });
+            return Task.FromResult(new FindingActionResult(true, "services.msc opened", null));
+        };
+
+        // ---- Classic right-click ----
+        _actionHandlers["classic.enable"] = async ct =>
+        {
+            var r = await _diag.EnableClassicRightClickAsync(ct);
+            return new FindingActionResult(r.Success, r.Note, null);
+        };
+        _actionHandlers["classic.undo"] = async ct =>
+        {
+            var r = await _diag.DisableClassicRightClickAsync(ct);
+            return new FindingActionResult(r.Success, r.Note, null);
+        };
+
+        // ---- Other one-shot opens ----
+        _actionHandlers["pagefile.open-sysdm"] = _ =>
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName        = "SystemPropertiesPerformance.exe",
+                UseShellExecute = true
+            });
+            return Task.FromResult(new FindingActionResult(true, "System Properties opened", null));
+        };
+        _actionHandlers["open-reliability-monitor"] = _ =>
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName        = "perfmon.exe",
+                Arguments       = "/rel",
+                UseShellExecute = true
+            });
+            return Task.FromResult(new FindingActionResult(true, "Reliability Monitor opened", null));
+        };
+        _actionHandlers["open-shell-ext-docs"] = _ =>
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName        = "https://learn.microsoft.com/windows/win32/shell/shell-extensions",
+                UseShellExecute = true
+            });
+            return Task.FromResult(new FindingActionResult(true, "Docs opened in browser", null));
+        };
+
+        // ---- Cross-tab nav ----
+        _actionHandlers["switch-to-cleanup-tab"] = _ =>
+        {
+            TabSwitchRequested?.Invoke("Cleanup");
+            return Task.FromResult(new FindingActionResult(true, "Switched to Cleanup tab", null));
+        };
+        _actionHandlers["open-task-manager"] = _ =>
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName        = "taskmgr.exe",
+                UseShellExecute = true
+            });
+            return Task.FromResult(new FindingActionResult(true, "Task Manager opened (click the Startup tab)", null));
+        };
+
+        // ---- Boost ----
+        _actionHandlers["boost.clear-working-sets"] = async ct =>
+        {
+            var r = await _boost.ClearWorkingSetsAsync(ct);
+            return new FindingActionResult(
+                Success: true,
+                Note:    $"Cleared working sets on {r.ProcessesTrimmed} processes",
+                Errors:  null);
+        };
+
+        // ---- Battery (handlers wired in Task 15) ----
     }
-#pragma warning restore CA1822
 }
