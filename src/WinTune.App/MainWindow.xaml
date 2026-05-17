@@ -133,6 +133,7 @@
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
                         <RowDefinition Height="*"/>
                     </Grid.RowDefinitions>
                     <TextBlock Grid.Row="0" Text="Quick performance actions" Style="{StaticResource HeaderText}"/>
@@ -144,14 +145,27 @@
                         <Button Content="Flush DNS Cache" Command="{Binding FlushDnsCommand}"
                                 Width="160" Margin="10,4,0,4"/>
                     </StackPanel>
-                    <TextBlock Grid.Row="2" Text="{Binding ResultMessage}" Margin="0,8,0,12"
+                    <Border Grid.Row="2" Margin="0,8,0,4" Padding="10,8" BorderBrush="#FFD0D0DC" BorderThickness="1" CornerRadius="3" Background="#FFF7F7FB">
+                        <StackPanel Orientation="Horizontal">
+                            <CheckBox Content="Auto Free RAM when usage exceeds"
+                                      IsChecked="{Binding IsAutoTrimEnabled}"
+                                      VerticalAlignment="Center"
+                                      ToolTip="Threshold-triggered, not periodic. Polls every 60s and trims working sets only when RAM is above the threshold. 5-minute cooldown between trims."/>
+                            <TextBox Width="55" Margin="10,0,4,0" VerticalAlignment="Center"
+                                     Text="{Binding RamThresholdPercent, UpdateSourceTrigger=PropertyChanged}"/>
+                            <TextBlock Text="%" VerticalAlignment="Center" Margin="0,0,16,0"/>
+                            <TextBlock Text="{Binding AutoTrimStatus}" VerticalAlignment="Center"
+                                       FontFamily="Consolas" Foreground="#FF1F1F2E"/>
+                        </StackPanel>
+                    </Border>
+                    <TextBlock Grid.Row="3" Text="{Binding ResultMessage}" Margin="0,8,0,12"
                                FontFamily="Consolas" Foreground="#FF1F1F2E"/>
-                    <StackPanel Grid.Row="3" Orientation="Horizontal" Margin="0,4,0,8">
+                    <StackPanel Grid.Row="4" Orientation="Horizontal" Margin="0,4,0,8">
                         <TextBlock Text="Startup programs (read-only — disable from Task Manager)"
                                    Style="{StaticResource HeaderText}" Margin="0,0,16,0"/>
                         <Button Content="Open Task Manager → Startup" Command="{Binding OpenStartupTaskManagerCommand}" Width="240"/>
                     </StackPanel>
-                    <DataGrid Grid.Row="4" ItemsSource="{Binding StartupApps}"
+                    <DataGrid Grid.Row="5" ItemsSource="{Binding StartupApps}"
                               AutoGenerateColumns="False" IsReadOnly="True"
                               HeadersVisibility="Column" GridLinesVisibility="Horizontal"
                               RowBackground="White" AlternatingRowBackground="#FFF2F2F7"
@@ -282,7 +296,7 @@
             </TabItem>
 
             <TabItem Header="  Diagnose  ">
-                <Grid Margin="14" DataContext="{Binding Diagnose}">
+                <Grid x:Name="DiagnoseRoot" Margin="14" DataContext="{Binding Diagnose}">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
@@ -299,6 +313,8 @@
                                    VerticalAlignment="Center" FontWeight="SemiBold"/>
                     </StackPanel>
                     <DataGrid Grid.Row="2" ItemsSource="{Binding Findings}"
+                              SelectedItem="{Binding SelectedFinding, Mode=TwoWay}"
+                              SelectionMode="Single" SelectionUnit="FullRow"
                               AutoGenerateColumns="False" IsReadOnly="True"
                               HeadersVisibility="Column" GridLinesVisibility="Horizontal"
                               RowBackground="White" AlternatingRowBackground="#FFF2F2F7"
@@ -319,15 +335,38 @@
                             <DataGridTextColumn Header="Hint"   Binding="{Binding Hint}"   Width="280"/>
                         </DataGrid.Columns>
                     </DataGrid>
-                    <TextBlock Grid.Row="3" Text="Safe one-click fixes"
-                               Style="{StaticResource HeaderText}" Margin="0,16,0,4"/>
-                    <WrapPanel Grid.Row="4" Orientation="Horizontal">
-                        <Button Content="Reset Quick Access"        Command="{Binding ResetQuickAccessCommand}"        Width="200" Margin="0,4,8,4"/>
-                        <Button Content="Disable Telemetry"         Command="{Binding DisableTelemetryCommand}"        Width="200" Margin="0,4,8,4"/>
-                        <Button Content="Apply Classic Right-Click" Command="{Binding EnableClassicRightClickCommand}" Width="220" Margin="0,4,8,4"/>
-                        <Button Content="Rebuild Search Index"      Command="{Binding RebuildSearchIndexCommand}"      Width="200" Margin="0,4,8,4"/>
-                        <Button Content="Undo Classic Right-Click"  Command="{Binding DisableClassicRightClickCommand}" Width="220" Margin="0,4,8,4"/>
-                    </WrapPanel>
+                    <Border Grid.Row="3" Margin="0,12,0,4" Padding="12,10"
+                            BorderBrush="#FFD0D0DC" BorderThickness="1" CornerRadius="3" Background="#FFF7F7FB"
+                            Visibility="{Binding SelectedFinding, Converter={StaticResource NullToCollapsed}}">
+                        <StackPanel>
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                                <TextBlock Text="Actions for: " FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                <TextBlock Text="{Binding SelectedFinding.Title}" FontWeight="SemiBold"
+                                           VerticalAlignment="Center" Foreground="#FF2D6CDF"/>
+                            </StackPanel>
+                            <TextBlock Text="{Binding SelectedFinding.Detail}" Margin="0,0,0,8"
+                                       TextWrapping="Wrap" Foreground="#FF1F1F2E"/>
+                            <ItemsControl ItemsSource="{Binding SelectedFinding.Actions}">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <WrapPanel Orientation="Horizontal"/>
+                                    </ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Button Content="{Binding Label}"
+                                                Command="{Binding DataContext.ExecuteFindingActionCommand, ElementName=DiagnoseRoot}"
+                                                CommandParameter="{Binding ActionId}"
+                                                MinWidth="180" Margin="0,4,8,4"/>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                    </Border>
+                    <TextBlock Grid.Row="4" Text="{Binding LastActionStatus}" Margin="0,6,0,0"
+                               FontFamily="Consolas" TextWrapping="Wrap"
+                               Visibility="{Binding LastActionStatus, Converter={StaticResource NullToCollapsed}}"
+                               Foreground="{Binding LastActionWasError, Converter={StaticResource ErrorBrush}}"/>
                 </Grid>
             </TabItem>
         </TabControl>

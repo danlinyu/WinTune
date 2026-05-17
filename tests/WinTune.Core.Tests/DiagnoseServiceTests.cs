@@ -86,6 +86,7 @@ public class DiagnoseServiceTests
             "boost.clear-working-sets",
             "open-reliability-monitor",
             "open-shell-ext-docs",
+            "open-apps-settings",
             "battery.unleash-all",
             "battery.fix-cpu-max",
             "battery.fix-epp",

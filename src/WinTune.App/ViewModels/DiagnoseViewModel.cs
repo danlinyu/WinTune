@@ -38,6 +38,7 @@ public sealed partial class DiagnoseViewModel : ObservableObject
         "pagefile.open-sysdm",
         "open-reliability-monitor",
         "open-shell-ext-docs",
+        "open-apps-settings",
         "switch-to-cleanup-tab",
         "open-task-manager",
         "boost.clear-working-sets",
@@ -224,6 +225,15 @@ public sealed partial class DiagnoseViewModel : ObservableObject
                 UseShellExecute = true
             });
             return Task.FromResult(new FindingActionResult(true, "Docs opened in browser", null));
+        };
+        _actionHandlers["open-apps-settings"] = _ =>
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName        = "ms-settings:appsfeatures",
+                UseShellExecute = true
+            });
+            return Task.FromResult(new FindingActionResult(true, "Installed Apps opened — uninstall the cloud client(s) you don't use", null));
         };
 
         // ---- Cross-tab nav ----

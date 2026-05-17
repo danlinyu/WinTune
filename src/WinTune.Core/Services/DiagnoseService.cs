@@ -181,7 +181,11 @@ public sealed class DiagnoseService : IDiagnoseService
                 Title: "Multiple cloud shell extensions loaded",
                 Detail: $"Explorer has {hits.Count} cloud DLLs: {string.Join(", ", hits)}",
                 Hint: "Pick ONE cloud, set BOTH to online-only / stream mode. Each shell ext queries cloud per file per folder open.",
-                Actions: new[] { new FindingAction("open-shell-ext-docs", "What is this?", null) }));
+                Actions: new[]
+                {
+                    new FindingAction("open-apps-settings", "Uninstall extra cloud apps", null),
+                    new FindingAction("open-shell-ext-docs", "Why this matters", null),
+                }));
         }
         else if (hits.Count == 1)
         {
@@ -191,7 +195,11 @@ public sealed class DiagnoseService : IDiagnoseService
                 Title: "Cloud shell extension loaded",
                 Detail: $"Explorer has 1 cloud DLL: {hits[0]}",
                 Hint: "OK if intentional. Set Files On-Demand / Stream mode to avoid local copies.",
-                Actions: new[] { new FindingAction("open-shell-ext-docs", "What is this?", null) }));
+                Actions: new[]
+                {
+                    new FindingAction("open-apps-settings", "Open Installed Apps", null),
+                    new FindingAction("open-shell-ext-docs", "Why this matters", null),
+                }));
         }
     }
 

@@ -43,6 +43,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         Diagnose.TabSwitchRequested -= OnTabSwitchRequested;
         Dashboard.Dispose();
         Clean.Dispose();
+        Boost.Dispose();
         Dedupe.Dispose();
     }
 }

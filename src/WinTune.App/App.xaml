@@ -7,6 +7,8 @@
         <ResourceDictionary>
             <conv:SeverityToBrushConverter x:Key="SeverityToBrush"/>
             <conv:BytesToDisplayConverter  x:Key="BytesToDisplay"/>
+            <conv:NullToCollapsedConverter x:Key="NullToCollapsed"/>
+            <conv:BoolToBrushConverter     x:Key="ErrorBrush"/>
 
             <Style TargetType="Button">
                 <Setter Property="Padding" Value="14,8"/>
