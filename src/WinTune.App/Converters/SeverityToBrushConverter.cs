@@ -20,9 +20,9 @@ public sealed class SeverityToBrushConverter : IValueConverter
     public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture) =>
         value switch
         {
-            Severity.Red => Red,
-            Severity.Yellow => Yellow,
-            Severity.Green => Green,
+            Severity.Red or OptimizationSeverity.Red => Red,
+            Severity.Yellow or OptimizationSeverity.Yellow => Yellow,
+            Severity.Green or OptimizationSeverity.Green => Green,
             _ => Default
         };
 

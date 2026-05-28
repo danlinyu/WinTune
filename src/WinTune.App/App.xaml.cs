@@ -40,10 +40,12 @@ public partial class App : Application
                 services.AddSingleton<IStartupService, StartupService>();
                 services.AddSingleton<IProcessRunner, ProcessRunner>();
                 services.AddSingleton<IPowerService,  PowerService>();
+                services.AddSingleton<IOptimizerService, OptimizerService>();
                 services.AddSingleton<IDiagnoseService, DiagnoseService>();
                 services.AddSingleton<IDedupService, DedupService>();
                 services.AddSingleton<IDedupHashCache, DedupHashCache>();
                 services.AddSingleton<DashboardViewModel>();
+                services.AddSingleton<OptimizeViewModel>();
                 services.AddSingleton<CleanViewModel>();
                 services.AddSingleton<BoostViewModel>();
                 services.AddSingleton<DiagnoseViewModel>();

@@ -20,7 +20,8 @@
             </StackPanel>
         </Border>
 
-        <TabControl Margin="10" Background="Transparent" BorderThickness="0">
+        <TabControl Margin="10" Background="Transparent" BorderThickness="0"
+                    SelectedIndex="{Binding SelectedTabIndex, Mode=TwoWay}">
 
             <TabItem Header="  Dashboard  ">
                 <Grid Margin="14" DataContext="{Binding Dashboard}">
@@ -74,6 +75,113 @@
                             </DataGrid.Columns>
                         </DataGrid>
                     </Grid>
+                </Grid>
+            </TabItem>
+
+            <TabItem Header="  Optimize  ">
+                <Grid Margin="14" DataContext="{Binding Optimize}">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="160"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    <TextBlock Grid.Row="0" Text="Adaptive system optimizer" Style="{StaticResource HeaderText}"/>
+                    <Grid Grid.Row="1" Margin="0,0,0,12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel>
+                            <TextBlock Text="{Binding MachineProfile}" FontFamily="Consolas"
+                                       TextWrapping="Wrap" Margin="0,0,0,5"/>
+                            <TextBlock Text="{Binding LivePressure}" FontFamily="Consolas"
+                                       TextWrapping="Wrap" Margin="0,0,0,5"/>
+                            <TextBlock Text="{Binding GpuProfile}" FontFamily="Consolas"
+                                       TextWrapping="Wrap" Margin="0,0,0,5"/>
+                            <StackPanel Orientation="Horizontal">
+                                <Border Background="{Binding Health, Converter={StaticResource SeverityToBrush}}"
+                                        CornerRadius="3" Padding="8,2" Margin="0,0,10,0">
+                                    <TextBlock Text="{Binding Health}" Foreground="White" FontWeight="SemiBold"/>
+                                </Border>
+                                <TextBlock Text="{Binding Status}" VerticalAlignment="Center"
+                                           FontFamily="Consolas" TextWrapping="Wrap"/>
+                            </StackPanel>
+                        </StackPanel>
+                        <StackPanel Grid.Column="1" Margin="16,0,0,0">
+                            <Button Content="Analyze now" Command="{Binding AnalyzeNowCommand}" Width="180"/>
+                            <Button Content="Smart optimize now" Command="{Binding SmartOptimizeNowCommand}"
+                                    Width="180" Background="#FF2D6CDF" Foreground="White" FontWeight="SemiBold"/>
+                            <Button Content="Resource Monitor" Command="{Binding OpenResourceMonitorCommand}"
+                                    Width="180" ToolTip="Opens resmon.exe so you can inspect disk-heavy processes."/>
+                        </StackPanel>
+                    </Grid>
+                    <Border Grid.Row="2" Margin="0,0,0,12" Padding="10,8"
+                            BorderBrush="#FFD0D0DC" BorderThickness="1" CornerRadius="3" Background="#FFF7F7FB">
+                        <StackPanel>
+                            <StackPanel Orientation="Horizontal">
+                                <CheckBox Content="Adaptive smoothing"
+                                          IsChecked="{Binding IsAdaptiveModeEnabled}"
+                                          VerticalAlignment="Center"
+                                          ToolTip="Opt-in dynamic mode. It samples pressure and only runs reversible actions."/>
+                                <TextBlock Text="{Binding LastAction}" Margin="18,0,0,0"
+                                           VerticalAlignment="Center" FontFamily="Consolas"
+                                           TextWrapping="Wrap"/>
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+                    <DataGrid x:Name="DrivesGrid" Grid.Row="3" ItemsSource="{Binding Drives}"
+                              AutoGenerateColumns="False" IsReadOnly="True"
+                              HeadersVisibility="Column" GridLinesVisibility="Horizontal"
+                              RowBackground="White" AlternatingRowBackground="#FFF2F2F7"
+                              BorderBrush="#FFD0D0DC" BorderThickness="1"
+                              Margin="0,0,0,12">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Drive" Binding="{Binding RootPath}" Width="70"/>
+                            <DataGridTextColumn Header="Name" Binding="{Binding DisplayName}" Width="*"/>
+                            <DataGridTextColumn Header="Media" Binding="{Binding MediaKind}" Width="90"/>
+                            <DataGridTextColumn Header="Free GB" Binding="{Binding FreeGB, StringFormat={}{0:N1}}" Width="90"/>
+                            <DataGridTextColumn Header="Total GB" Binding="{Binding TotalGB, StringFormat={}{0:N1}}" Width="90"/>
+                            <DataGridTextColumn Header="Used" Binding="{Binding UsedPct, StringFormat={}{0:N0}%}" Width="70"/>
+                            <DataGridTextColumn Header="Active" Binding="{Binding ActiveTimePct, TargetNullValue=-, StringFormat={}{0}%}" Width="70"/>
+                            <DataGridTextColumn Header="Queue" Binding="{Binding QueueLength, TargetNullValue=-, StringFormat={}{0:N1}}" Width="70"/>
+                            <DataGridTextColumn Header="MB/s" Binding="{Binding ThroughputMBps, TargetNullValue=-, StringFormat={}{0:N1}}" Width="70"/>
+                            <DataGridCheckBoxColumn Header="System" Binding="{Binding IsSystemDrive}" Width="70"/>
+                            <DataGridTemplateColumn Header="Windows Optimize" Width="150">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <Button Content="Optimize"
+                                                Command="{Binding DataContext.OptimizeDriveCommand, ElementName=DrivesGrid}"
+                                                CommandParameter="{Binding RootPath}"
+                                                Margin="2"
+                                                ToolTip="Runs Windows defrag.exe /O for this drive. Windows chooses defrag, TRIM/retrim, or the appropriate media-specific operation."/>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                    <DataGrid Grid.Row="4" ItemsSource="{Binding Recommendations}"
+                              AutoGenerateColumns="False" IsReadOnly="True"
+                              HeadersVisibility="Column" GridLinesVisibility="Horizontal"
+                              RowBackground="White" AlternatingRowBackground="#FFF2F2F7"
+                              BorderBrush="#FFD0D0DC" BorderThickness="1">
+                        <DataGrid.Columns>
+                            <DataGridTemplateColumn Header="Severity" Width="80">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <Border Background="{Binding Severity, Converter={StaticResource SeverityToBrush}}"
+                                                CornerRadius="3" Padding="8,2" HorizontalAlignment="Left">
+                                            <TextBlock Text="{Binding Severity}" Foreground="White" FontWeight="SemiBold"/>
+                                        </Border>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTextColumn Header="Area"   Binding="{Binding Area}"   Width="140"/>
+                            <DataGridTextColumn Header="Detail" Binding="{Binding Detail}" Width="*"/>
+                            <DataGridTextColumn Header="Action" Binding="{Binding Action}" Width="280"/>
+                        </DataGrid.Columns>
+                    </DataGrid>
                 </Grid>
             </TabItem>
 
