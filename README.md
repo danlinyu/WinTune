@@ -21,10 +21,23 @@ WinTune addresses each of these with one click.
 
 ## What it does (and what it deliberately doesn't)
 
-### Five tabs
+### Six tabs
 
 **Dashboard** — live CPU, RAM, and disk-C: bars (refresh every 2 s) plus a top-10
 process list sorted by working-set RAM.
+
+**Optimize** — adaptive system overview for the whole machine:
+- Profiles CPU count, RAM tier, all fixed drives, GPU adapter memory, and live
+  drive I/O pressure.
+- Flags RAM pressure, low free space on any fixed drive, busy/saturated drive I/O,
+  and high CPU load with clear next actions.
+- Optional **Adaptive smoothing** only performs reversible working-set trimming
+  after sustained RAM pressure and a cooldown.
+- Per-drive **Optimize** buttons call Windows' own media-aware drive optimizer
+  (`defrag.exe /O`), so SSDs get SSD-appropriate maintenance and HDDs get
+  defragmentation when Windows decides it is appropriate.
+- **Resource Monitor** button opens Windows' built-in disk/process view when a
+  drive is busy.
 
 **Clean** — pick what to clear, click Run:
 - User Temp (`%TEMP%`)
@@ -97,17 +110,29 @@ WPF script is preserved in this repo as a reference implementation.
 
 ### Self-contained .exe (recommended)
 
-Single ~63 MB `WinTune.exe`, no PowerShell or .NET runtime needed on the
-target machine. Either grab the latest CI artifact from the
-[Actions tab](https://github.com/danlinyu/WinTune/actions) or build it
-yourself with the .NET 10 SDK:
+Single self-contained `WinTune.exe`, no PowerShell or .NET runtime needed on the
+target machine.
+
+Download the latest prebuilt executable here:
+
+**[Download WinTune.exe](https://github.com/danlinyu/WinTune/releases/latest/download/WinTune.exe)**
+
+If you want to build it yourself, install the .NET 10 SDK, clone the repo, and
+run the publish command from the repo root. The `src\WinTune.App\WinTune.App.csproj`
+path only exists after cloning and `cd`-ing into `WinTune`:
 
 ```powershell
-dotnet publish src/WinTune.App/WinTune.App.csproj -c Release -r win-x64 -o publish/win-x64
+git clone https://github.com/danlinyu/WinTune.git
+cd WinTune
+dotnet publish .\src\WinTune.App\WinTune.App.csproj -c Release -r win-x64 --self-contained true -o .\publish\win-x64
 .\publish\win-x64\WinTune.exe
 ```
 
 UAC will prompt automatically (the app manifest requests `requireAdministrator`).
+
+If you see `MSB1009: Project file does not exist`, you are not in the cloned
+repo root. Run `cd WinTune` first and confirm that `WinTune.sln` is in the
+current directory.
 
 ### PowerShell version (reference implementation)
 
